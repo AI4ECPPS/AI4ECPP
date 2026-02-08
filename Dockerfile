@@ -11,12 +11,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies (Policy Analyst + Policy DL Agent)
-# Combined: torch, numpy, pandas, statsmodels, scikit-learn, scipy, matplotlib, seaborn
+# Use PyTorch CPU-only version - smaller & faster to install, avoids build timeout
 COPY server/scripts/requirements.txt /tmp/base-requirements.txt
 COPY server/scripts/policy_dl_agent/requirements.txt /tmp/dl-requirements.txt
-RUN pip3 install --break-system-packages \
+RUN pip3 install --break-system-packages torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip3 install --break-system-packages \
     -r /tmp/base-requirements.txt \
-    -r /tmp/dl-requirements.txt
+    scikit-learn scipy
 
 # Create app directory
 WORKDIR /app
