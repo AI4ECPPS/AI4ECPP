@@ -1,0 +1,36 @@
+# Dependencies
+node_modules
+server/node_modules
+
+# Build output (will be rebuilt in Docker)
+dist
+
+# Git
+.git
+.gitignore
+
+# IDE & OS
+.vscode
+.idea
+.DS_Store
+*.swp
+*.swo
+
+# Environment files (secrets - set via Railway)
+.env
+.env.*
+!.env.example
+server/.env
+
+# Python cache
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# Logs & temp
+*.log
+npm-debug.log*
+.npm
+
+# Documentation (optional - keep if small)
+# README.md
