@@ -3,6 +3,7 @@ import cors from 'cors'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
+import { initDb } from './db.js'
 import authRoutes from './routes/auth.js'
 import chatgptRoutes from './routes/chatgpt.js'
 import policyAnalystRoutes from './routes/policy-analyst.js'
@@ -53,9 +54,20 @@ if (process.env.NODE_ENV === 'production') {
   })
 }
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`)
-  console.log(`📝 Make sure to set OPENAI_API_KEY in your .env file`)
+// Start server (init DB first when DATABASE_URL is set)
+async function start() {
+  if (process.env.DATABASE_URL) {
+    const ok = await initDb()
+    if (ok) console.log('📦 Database connected (users will persist)')
+    else console.warn('⚠️ Database init failed; using in-memory user storage')
+  }
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`)
+    console.log(`📝 Make sure to set OPENAI_API_KEY in your .env file`)
+  })
+}
+start().catch((err) => {
+  console.error('Failed to start:', err)
+  process.exit(1)
 })
 

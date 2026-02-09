@@ -47,6 +47,18 @@
 
 如果启用了自定义域名或需要 CORS，将 `FRONTEND_URL` 设为你的实际前端访问地址。
 
+### 6. 用户数据持久化（可选）
+
+若希望注册/登录用户在重启或重新部署后仍保留，可添加 PostgreSQL 数据库：
+
+1. 在 Railway 项目中点击 **+ New** → **Database** → **PostgreSQL**
+2. 创建完成后，点击该 PostgreSQL 服务 → **Variables**，复制或查看 `DATABASE_URL`
+3. 在 **AI4ECPP 应用服务** 中 → **Variables** → **Add Variable**（或从 Postgres 服务 **Connect** 到应用），确保应用能拿到 **DATABASE_URL**
+4. 若 Railway 未自动注入，可手动添加变量：名称 `DATABASE_URL`，值为 PostgreSQL 提供的连接字符串
+5. 保存后 Railway 会重新部署；启动日志中若出现 `Database connected (users will persist)` 即表示已启用数据库存储
+
+未设置 `DATABASE_URL` 时，用户数据仍使用内存存储，重启后会丢失。
+
 ## 项目结构说明
 
 - **Dockerfile**：构建 Node.js + Python 环境，包含前端构建与后端服务
@@ -71,7 +83,7 @@ PyTorch 体积较大，首次构建可能较慢。若多次超时，可考虑在
 
 ### 用户注册后重启丢失
 
-当前使用内存存储用户。生产环境建议接入数据库（如 PostgreSQL、MongoDB），Railway 支持添加数据库服务。
+在 Railway 中为项目添加 **PostgreSQL** 数据库，并在应用的环境变量中配置 **DATABASE_URL**（见上文「用户数据持久化」）。配置成功后用户数据会写入数据库，重启与重新部署后仍保留。
 
 ### API 请求跨域错误
 

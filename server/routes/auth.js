@@ -2,11 +2,52 @@ import express from 'express'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { validateInput, validateEmailFormat, validatePasswordFormat } from '../middleware/security.js'
+import { getPool } from '../db.js'
 
 const router = express.Router()
 
-// In-memory user storage (for demo - use a real database in production)
+// In-memory fallback when DATABASE_URL is not set (e.g. local dev)
 const users = []
+
+async function findUserByEmail(email) {
+  const pool = getPool()
+  if (pool) {
+    const r = await pool.query('SELECT id, email, password, created_at AS "createdAt" FROM users WHERE email = $1', [email])
+    return r.rows[0] || null
+  }
+  return users.find(u => u.email === email) || null
+}
+
+async function findUserById(id) {
+  const pool = getPool()
+  if (pool) {
+    const r = await pool.query('SELECT id, email, password, created_at AS "createdAt" FROM users WHERE id = $1', [id])
+    return r.rows[0] || null
+  }
+  return users.find(u => u.id === id) || null
+}
+
+async function createUser(user) {
+  const pool = getPool()
+  if (pool) {
+    await pool.query(
+      'INSERT INTO users (id, email, password, created_at) VALUES ($1, $2, $3, $4)',
+      [user.id, user.email, user.password, user.createdAt]
+    )
+    return
+  }
+  users.push(user)
+}
+
+async function updateUserPassword(id, hashedPassword) {
+  const pool = getPool()
+  if (pool) {
+    await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, id])
+    return
+  }
+  const user = users.find(u => u.id === id)
+  if (user) user.password = hashedPassword
+}
 
 // JWT验证中间件
 const authenticateToken = (req, res, next) => {
@@ -43,7 +84,7 @@ router.post('/signup',
     const normalizedEmail = email.trim().toLowerCase()
 
     // Check if user already exists
-    const existingUser = users.find(u => u.email === normalizedEmail)
+    const existingUser = await findUserByEmail(normalizedEmail)
     if (existingUser) {
       return res.status(400).json({ error: 'User already exists' })
     }
@@ -59,12 +100,11 @@ router.post('/signup',
       createdAt: new Date()
     }
 
-    users.push(user)
+    await createUser(user)
 
     // Debug: Log user creation (only in development)
     if (process.env.NODE_ENV !== 'production') {
       console.log(`[DEBUG] User created: ${normalizedEmail}`)
-      console.log(`[DEBUG] Total users: ${users.length}`)
     }
 
     // Generate JWT token
@@ -101,17 +141,12 @@ router.post('/login',
     // Normalize email to lowercase for consistent lookup
     const normalizedEmail = email.trim().toLowerCase()
 
-    // Debug: Log current users (only in development)
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[DEBUG] Login attempt for: ${normalizedEmail}`)
-      console.log(`[DEBUG] Current users in memory: ${users.length}`)
-      console.log(`[DEBUG] User emails: ${users.map(u => u.email).join(', ') || 'none'}`)
-    }
-
     // Find user
-    const user = users.find(u => u.email === normalizedEmail)
+    const user = await findUserByEmail(normalizedEmail)
     if (!user) {
-      console.log(`[DEBUG] User not found: ${normalizedEmail}`)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[DEBUG] User not found: ${normalizedEmail}`)
+      }
       return res.status(401).json({ error: 'Invalid credentials' })
     }
 
@@ -171,7 +206,7 @@ router.put('/change-password',
       }
 
       // Find user
-      const user = users.find(u => u.id === userId)
+      const user = await findUserById(userId)
       if (!user) {
         return res.status(404).json({ error: 'User not found' })
       }
@@ -190,9 +225,7 @@ router.put('/change-password',
 
       // Hash new password
       const hashedPassword = await bcrypt.hash(newPassword, 10)
-
-      // Update password
-      user.password = hashedPassword
+      await updateUserPassword(userId, hashedPassword)
 
       res.json({
         message: 'Password changed successfully'
