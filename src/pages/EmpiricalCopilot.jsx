@@ -1,9 +1,60 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { callChatGPT } from '../utils/api'
+import { callChatGPT, callChatGPTStream } from '../utils/api'
 import api from '../utils/api'
 import Logo from '../components/Logo'
+import ReactMarkdown from 'react-markdown'
 import { validateAndSanitizeText, limitInputLength } from '../utils/security'
+
+const DEFAULT_KEY_POINTS = [
+  'Check for heteroskedasticity using Breusch-Pagan test or White test',
+  'Verify normality of residuals (important for inference)',
+  'Test for multicollinearity (VIF > 10 indicates problems)',
+  'Consider robust standard errors if heteroskedasticity is present',
+  'Ensure exogeneity assumption: E[ε|X] = 0',
+  'Check for omitted variable bias',
+  'Verify sample size is adequate for your model',
+  'Consider fixed effects if using panel data'
+]
+
+function getSystemMessageAndHint(language) {
+  const base = `You are an expert econometrician specializing in ${language} programming for empirical analysis. You must respond with: (1) exactly one markdown code block containing complete, runnable ${language} code; (2) after the code block, a section "## Key knowledge points" with bullet points for assumptions, diagnostic tests, and pitfalls. Do not add other sections before or after.`
+  const hints = {
+    R: 'Use standard R packages only: e.g. lm, sandwich, lmtest, plm, fixest, broom, AER, car. Avoid non-existent or obscure packages.',
+    Python: 'Use standard Python libraries only: pandas, numpy, statsmodels, linearmodels, scipy.stats. Avoid non-standard or rarely used packages.',
+    Stata: 'Use standard Stata commands and common ado files. Prefer built-in reg, ivregress, reghdfe, and official/well-documented community commands.'
+  }
+  const packageHint = hints[language] || ''
+  return {
+    systemMessage: base + (packageHint ? ` ${packageHint}` : ''),
+    packageHint: packageHint ? `Package/library note: ${packageHint}` : ''
+  }
+}
+
+function parseCodeAndKeyPoints(content) {
+  let code = ''
+  const codeBlockMatch = content.match(/```[\s\S]*?```/g)
+  if (codeBlockMatch) {
+    code = codeBlockMatch[0].replace(/```\w*\n?/g, '').replace(/```/g, '').trim()
+  } else {
+    code = content
+  }
+  let points = []
+  const keySection = content.match(/##\s*Key knowledge points\s*\n([\s\S]+?)(?=\n##|\n```|$)/i)
+  if (keySection) {
+    const text = keySection[1]
+    const list = text.match(/(?:[-•*]|\d+\.)\s*([^\n]+)/g)
+    if (list) points = list.slice(0, 10).map(p => p.replace(/^[-•*\d.]\s*/, '').trim())
+  }
+  if (points.length === 0) {
+    const fallback = content.match(/(?:key points?|important|assumptions?|tests?|knowledge points?)[:\s]+([\s\S]+?)(?:\n\n|\n#|$)/i)
+    if (fallback) {
+      const list = fallback[1].match(/(?:[-•*]|\d+\.)\s*([^\n]+)/g)
+      if (list) points = list.slice(0, 10).map(p => p.replace(/^[-•*\d.]\s*/, '').trim())
+    }
+  }
+  return { code, points }
+}
 
 function EmpiricalCopilot() {
   const navigate = useNavigate()
@@ -18,12 +69,26 @@ function EmpiricalCopilot() {
   const [imageSource, setImageSource] = useState(null) // 'upload' or 'paste'
   const containerRef = useRef(null)
   
-  // Shared states
   const [language, setLanguage] = useState('R')
   const [generatedCode, setGeneratedCode] = useState('')
   const [keyPoints, setKeyPoints] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [copyFeedback, setCopyFeedback] = useState('')
+
+  const applyCodeResult = useCallback((content, lang) => {
+    const { code, points } = parseCodeAndKeyPoints(content)
+    setGeneratedCode(code || `# ${lang} code will be generated here`)
+    setKeyPoints(points.length > 0 ? points : DEFAULT_KEY_POINTS)
+  }, [])
+
+  const getDownloadFilename = useCallback(() => {
+    const ext = language === 'R' ? 'r' : language === 'Python' ? 'py' : 'do'
+    const d = new Date()
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const slug = (activeTab === 'text' ? description : '').trim().slice(0, 30).replace(/\s+/g, '-').replace(/[^\w\-]/g, '') || 'analysis'
+    return `empirical_${slug}_${dateStr}.${ext}`
+  }, [language, activeTab, description])
 
   const handleDescriptionChange = (e) => {
     const value = limitInputLength(e.target.value, 5000)
@@ -31,85 +96,58 @@ function EmpiricalCopilot() {
   }
 
   const handleGenerate = async () => {
-    // 验证输入 - 拒绝包含脏话的输入
+    setError('')
     const validation = validateAndSanitizeText(description, {
       maxLength: 5000,
       minLength: 10,
       required: true,
-      filterProfanity: false // 直接拒绝脏话而不是过滤
+      filterProfanity: false
     })
-
     if (!validation.valid) {
-      alert(validation.message || 'Please check your input')
+      setError(validation.message || 'Please check your input')
       return
     }
-
     if (!description.trim()) {
-      alert('Please describe your empirical analysis scenario')
+      setError('Please describe your empirical analysis scenario (at least 10 characters).')
       return
     }
 
     setLoading(true)
-    try {
-      // 使用清理后的输入
-      const cleanedDescription = validation.cleaned
-      const prompt = `Generate ${language} code for the following econometric/empirical analysis scenario:
+    setGeneratedCode('')
+    setKeyPoints([])
+    const cleanedDescription = validation.cleaned
+    const { systemMessage, packageHint } = getSystemMessageAndHint(language)
+    const prompt = `Generate ${language} code for the following econometric/empirical analysis scenario:
 
 ${cleanedDescription}
 
-Please provide:
-1. Complete, runnable code with proper structure
-2. Include data loading, variable preparation, regression analysis, and results interpretation
-3. Add comments explaining each step
-4. Include common diagnostic tests and assumptions checks
+Requirements:
+1. Provide exactly one markdown code block containing the full, runnable ${language} code (use \`\`\`${language === 'R' ? 'r' : language === 'Python' ? 'python' : 'stata'}\`\`\`). Include data loading, variable preparation, regression, and interpretation.
+2. Add clear comments for each step and include standard diagnostic tests (e.g. heteroskedasticity, normality, multicollinearity where relevant).
+3. After the code block, add a section titled exactly: ## Key knowledge points
+   Under it list bullet points for: important assumptions, tests not to forget, and potential pitfalls.
 
-Also identify key knowledge points including:
-- Important assumptions that must be satisfied
-- Tests that should not be forgotten
-- Potential pitfalls to avoid`
+${packageHint}`
 
-      const response = await callChatGPT(prompt, `You are an expert econometrician specializing in ${language} programming for empirical analysis.`)
-      
-      const content = response.content || ''
-      
-      // Extract code from response (look for code blocks)
-      let generatedCode = ''
-      const codeBlockMatch = content.match(/```[\s\S]*?```/g)
-      if (codeBlockMatch) {
-        generatedCode = codeBlockMatch[0].replace(/```\w*\n?/g, '').replace(/```/g, '').trim()
-      } else {
-        // If no code block, use the full content
-        generatedCode = content
+    try {
+      try {
+        const result = await callChatGPTStream(prompt, systemMessage, () => {})
+        const content = (result?.content || '').trim()
+        if (content) applyCodeResult(content, language)
+        else setError('No response received. Please try again.')
+      } catch (streamErr) {
+        const msg = streamErr?.message || ''
+        if (msg.includes('404')) {
+          const response = await callChatGPT(prompt, systemMessage, { temperature: 0.3 })
+          const content = response?.content || ''
+          if (content) applyCodeResult(content, language)
+          else setError('No response received. Please try again.')
+        } else throw streamErr
       }
-      
-      // Extract key points
-      const keyPointsSection = content.match(/(?:key points?|important|assumptions?|tests?|knowledge points?)[:\s]+([\s\S]+?)(?:\n\n|\n#|$)/i)
-      let extractedPoints = []
-      if (keyPointsSection) {
-        const pointsText = keyPointsSection[1]
-        const pointsList = pointsText.match(/(?:[-•*]|\d+\.)\s*([^\n]+)/g)
-        if (pointsList) {
-          extractedPoints = pointsList.slice(0, 10).map(p => p.replace(/^[-•*\d.]\s*/, '').trim())
-        }
-      }
-      
-      // Fallback key points
-      const defaultKeyPoints = [
-        'Check for heteroskedasticity using Breusch-Pagan test or White test',
-        'Verify normality of residuals (important for inference)',
-        'Test for multicollinearity (VIF > 10 indicates problems)',
-        'Consider robust standard errors if heteroskedasticity is present',
-        'Ensure exogeneity assumption: E[ε|X] = 0',
-        'Check for omitted variable bias',
-        'Verify sample size is adequate for your model',
-        'Consider fixed effects if using panel data'
-      ]
-
-      setGeneratedCode(generatedCode || `# ${language} code will be generated here`)
-      setKeyPoints(extractedPoints.length > 0 ? extractedPoints : defaultKeyPoints)
-    } catch (error) {
-      alert('Error generating code. Please try again.')
-      console.error(error)
+    } catch (err) {
+      console.error(err)
+      const msg = err?.message || ''
+      setError(msg.includes('Network') || err?.request ? 'Network error. Please try again.' : (msg || 'Error generating code. Please try again.'))
     } finally {
       setLoading(false)
     }
@@ -240,80 +278,41 @@ Also identify key knowledge points including:
             return
           }
 
-          // Then, generate code based on the LaTeX formula
-          const prompt = `Generate ${language} code to implement the following econometric formula from a research paper:
+          const { systemMessage, packageHint } = getSystemMessageAndHint(language)
+          const prompt = `Convert the following econometric formula (from a research paper) into ${language} code:
 
 ${latexFormula}
 
 Requirements:
-1. Provide complete, runnable ${language} code
-2. Include data loading/simulation, variable preparation, and implementation of the formula
-3. Add detailed comments explaining each step and the econometric concepts
-4. Include appropriate diagnostic tests and assumptions checks
-5. Use standard ${language} packages and libraries
-6. Make the code production-ready and well-structured
+1. Provide exactly one markdown code block with full, runnable ${language} code: data/simulation setup, variable preparation, formula implementation, and basic diagnostics.
+2. Add clear comments for each step. After the code block, add a section titled exactly: ## Key knowledge points
+   with bullet points for assumptions, tests, and pitfalls.
 
-Also identify key knowledge points including:
-- Important assumptions that must be satisfied
-- Tests that should not be forgotten
-- Potential pitfalls to avoid
-- Interpretation of results`
+${packageHint}`
 
-          const systemMessage = `You are an expert econometrician specializing in ${language} programming. Your task is to convert econometric formulas from research papers into working code. You have deep knowledge of:
-- Econometric methods and their implementation in ${language}
-- Standard ${language} packages for econometrics
-- Best practices for empirical analysis
-- Diagnostic tests and model validation
-
-Generate clean, well-commented, production-ready code that accurately implements the given formula.`
-
-          const response = await callChatGPT(prompt, systemMessage)
-          
-          const content = response.content || ''
-          
-          // Extract code from response
-          let generatedCode = ''
-          const codeBlockMatch = content.match(/```[\s\S]*?```/g)
-          if (codeBlockMatch) {
-            generatedCode = codeBlockMatch[0].replace(/```\w*\n?/g, '').replace(/```/g, '').trim()
-          } else {
-            generatedCode = content
+          try {
+            const result = await callChatGPTStream(prompt, systemMessage, () => {})
+            const content = (result?.content || '').trim()
+            if (content) applyCodeResult(content, language)
+            else setError('No response received. Please try again.')
+          } catch (streamErr) {
+            const msg = streamErr?.message || ''
+            if (msg.includes('404')) {
+              const response = await callChatGPT(prompt, systemMessage, { temperature: 0.3 })
+              const content = response?.content || ''
+              if (content) applyCodeResult(content, language)
+              else setError('No response received. Please try again.')
+            } else throw streamErr
           }
-          
-          // Extract key points
-          const keyPointsSection = content.match(/(?:key points?|important|assumptions?|tests?|knowledge points?)[:\s]+([\s\S]+?)(?:\n\n|\n#|$)/i)
-          let extractedPoints = []
-          if (keyPointsSection) {
-            const pointsText = keyPointsSection[1]
-            const pointsList = pointsText.match(/(?:[-•*]|\d+\.)\s*([^\n]+)/g)
-            if (pointsList) {
-              extractedPoints = pointsList.slice(0, 10).map(p => p.replace(/^[-•*\d.]\s*/, '').trim())
-            }
-          }
-          
-          const defaultKeyPoints = [
-            'Check for heteroskedasticity using Breusch-Pagan test or White test',
-            'Verify normality of residuals (important for inference)',
-            'Test for multicollinearity (VIF > 10 indicates problems)',
-            'Consider robust standard errors if heteroskedasticity is present',
-            'Ensure exogeneity assumption: E[ε|X] = 0',
-            'Check for omitted variable bias',
-            'Verify sample size is adequate for your model',
-            'Consider fixed effects if using panel data'
-          ]
-
-          setGeneratedCode(generatedCode || `# ${language} code will be generated here`)
-          setKeyPoints(extractedPoints.length > 0 ? extractedPoints : defaultKeyPoints)
         } catch (err) {
           console.error('Error generating code from image:', err)
-          
-          if (err.response) {
-            const errorData = err.response.data
-            setError(errorData.message || errorData.error || 'Failed to generate code. Please try again.')
-          } else if (err.request) {
-            setError('Network error. Please check your internet connection and try again.')
+          if (err?.response?.data) {
+            const ed = err.response.data
+            setError(ed.message || ed.error || 'Failed to generate code. Please try again.')
+          } else if (err?.request) {
+            setError('Network error. Please try again.')
           } else {
-            setError('An unexpected error occurred. Please try again.')
+            setError(err?.message || 'An unexpected error occurred. Please try again.')
           }
         } finally {
           setLoading(false)
@@ -363,17 +362,27 @@ Generate clean, well-commented, production-ready code that accurately implements
     setGeneratedCode('')
     setKeyPoints([])
     setError('')
+    setCopyFeedback('')
   }
 
   const handleDownload = () => {
-    const extension = language === 'R' ? 'r' : language === 'Python' ? 'py' : 'do'
     const blob = new Blob([generatedCode], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `empirical_analysis.${extension}`
+    a.download = getDownloadFilename()
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  const handleCopyCode = () => {
+    if (!generatedCode) return
+    navigator.clipboard.writeText(generatedCode)
+      .then(() => {
+        setCopyFeedback('Copied!')
+        setTimeout(() => setCopyFeedback(''), 2000)
+      })
+      .catch(() => setError('Copy failed. Please select and copy manually.'))
   }
 
   return (
@@ -395,6 +404,27 @@ Generate clean, well-commented, production-ready code that accurately implements
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Professional Mode prompt */}
+        <div className="mb-6 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4 text-white" style={{ backgroundColor: '#5B5BF5' }}>
+          <p className="text-indigo-100 text-sm sm:text-base">
+            For more complete features (e.g. advanced workflows, integration with other tools), try <strong>Professional Mode</strong>.
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate('/profession-dashboard')}
+            className="shrink-0 px-4 py-2 bg-white text-indigo-700 rounded-lg font-semibold hover:bg-indigo-50 transition"
+          >
+            Go to Professional Mode →
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center justify-between gap-4">
+            <span>{error}</span>
+            <button type="button" onClick={() => setError('')} className="text-red-500 hover:text-red-700 shrink-0" aria-label="Dismiss">×</button>
+          </div>
+        )}
+
         {/* Tab Navigation */}
         <div className="bg-white rounded-lg shadow mb-6">
           <div className="flex border-b border-gray-200">
@@ -446,12 +476,6 @@ Generate clean, well-commented, production-ready code that accurately implements
               </select>
             </div>
 
-            {error && (
-              <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-                {error}
-              </div>
-            )}
-
             <div className="flex gap-3">
               <button
                 onClick={handleGenerate}
@@ -480,7 +504,9 @@ Generate clean, well-commented, production-ready code that accurately implements
             <p className="text-sm text-gray-600 mb-4">
               Upload or paste a screenshot of a formula from a research paper, and we'll generate code to implement it.
             </p>
-            
+            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+              For best results use a clear, cropped image of the formula.
+            </p>
             <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center mb-4">
               <input
                 type="file"
@@ -531,12 +557,6 @@ Generate clean, well-commented, production-ready code that accurately implements
               </select>
             </div>
 
-            {error && (
-              <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-                {error}
-              </div>
-            )}
-
             <div className="flex gap-3">
               <button
                 onClick={handleGenerateFromImage}
@@ -558,17 +578,41 @@ Generate clean, well-commented, production-ready code that accurately implements
           </div>
         )}
 
+        {/* Loading placeholder */}
+        {loading && !generatedCode && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-xl font-bold mb-4">Generating code…</h2>
+            <p className="text-gray-500 mb-4">Code and key points will appear here when ready.</p>
+            <div className="flex items-center gap-2">
+              <svg className="animate-spin h-5 w-5 text-indigo-600" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <span className="text-sm text-gray-500">Analyzing…</span>
+            </div>
+          </div>
+        )}
+
         {/* Generated Code */}
         {generatedCode && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
               <h2 className="text-xl font-bold">Generated {language} Code</h2>
-              <button
-                onClick={handleDownload}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
-              >
-                Download Code
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyCode}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition"
+                >
+                  {copyFeedback === 'Copied!' ? copyFeedback : 'Copy code'}
+                </button>
+                <button
+                  onClick={handleDownload}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                >
+                  Download Code
+                </button>
+              </div>
             </div>
             <div className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto">
               <pre className="text-sm font-mono whitespace-pre-wrap">{generatedCode}</pre>
@@ -586,8 +630,10 @@ Generate clean, well-commented, production-ready code that accurately implements
             <ul className="space-y-3">
               {keyPoints.map((point, idx) => (
                 <li key={idx} className="flex items-start gap-3">
-                  <span className="text-indigo-600 font-bold mt-1">•</span>
-                  <span className="text-gray-700">{point}</span>
+                  <span className="text-indigo-600 font-bold mt-1 shrink-0">•</span>
+                  <span className="text-gray-700 prose prose-sm max-w-none [&>p]:my-0 [&>p]:inline">
+                    <ReactMarkdown components={{ p: ({ children }) => <span>{children}</span> }}>{point}</ReactMarkdown>
+                  </span>
                 </li>
               ))}
             </ul>

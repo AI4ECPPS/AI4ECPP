@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { callChatGPT } from '../utils/api'
+import { callChatGPT, callChatGPTStream } from '../utils/api'
 import ReactMarkdown from 'react-markdown'
 import Logo from '../components/Logo'
 import { validateAndSanitizeText, limitInputLength } from '../utils/security'
@@ -17,6 +17,26 @@ function OfferGenerator() {
   const [generatedOffer, setGeneratedOffer] = useState('')
   const [loading, setLoading] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [error, setError] = useState('')
+  const [copyFeedback, setCopyFeedback] = useState('')
+
+  const getOfferSlug = () => {
+    if (offerType === 'academic') {
+      if (academicPosition === 'phd') return 'phd'
+      if (academicPosition === 'professor') return 'professor'
+      return 'research-assistant'
+    }
+    if (industryPosition === 'consultant') return 'consultant'
+    if (industryPosition === 'analyst') return 'analyst'
+    if (industryPosition === 'researcher') return 'researcher'
+    return 'ngo'
+  }
+
+  const getDownloadBasename = () => {
+    const slug = getOfferSlug()
+    const safeName = (name || 'offer').trim().replace(/\s+/g, '-').replace(/[^\w\-]/g, '') || 'offer'
+    return `${slug}-offer-${safeName}`
+  }
 
   const handleNameChange = (e) => {
     const value = limitInputLength(e.target.value, 100)
@@ -29,51 +49,46 @@ function OfferGenerator() {
   }
 
   const handleGenerate = async () => {
-    // 验证输入 - 拒绝包含脏话的输入
+    setError('')
     const validation = validateAndSanitizeText(name, {
       maxLength: 100,
       minLength: 1,
       required: true,
-      filterProfanity: false // 直接拒绝脏话而不是过滤
+      filterProfanity: false
     })
 
     if (!validation.valid) {
-      alert(validation.message || 'Please check your input')
+      setError(validation.message || 'Please check your input')
       return
     }
 
     if (!name.trim()) {
-      alert('Please enter your name')
+      setError('Please enter your name')
       return
     }
 
-    setLoading(true)
-    try {
-      // 使用清理后的输入
-      const cleanedName = validation.cleaned
-      
-      // 验证可选的描述输入
-      // 注意：用户描述文本不需要进行SQL注入和XSS检测，因为：
-      // 1. 这些文本会被发送到ChatGPT API，不会直接进入数据库
-      // 2. 正常文本可能包含单引号（如 "I'm"）等字符，这些是合法的
-      // 3. 只需要检查长度和脏话即可
-      let cleanedDescription = ''
-      if (additionalDescription.trim()) {
-        const descValidation = validateAndSanitizeText(additionalDescription, {
-          maxLength: 1000,
-          minLength: 0,
-          required: false,
-          filterProfanity: false,
-          checkSQLInjection: false, // 不检查SQL注入
-          checkXSS: false // 不检查XSS
-        })
-        if (!descValidation.valid) {
-          alert(descValidation.message || 'Please check your additional description')
-          setLoading(false)
-          return
-        }
-        cleanedDescription = descValidation.cleaned
+    let cleanedDescription = ''
+    if (additionalDescription.trim()) {
+      const descValidation = validateAndSanitizeText(additionalDescription, {
+        maxLength: 1000,
+        minLength: 0,
+        required: false,
+        filterProfanity: false,
+        checkSQLInjection: false,
+        checkXSS: false
+      })
+      if (!descValidation.valid) {
+        setError(descValidation.message || 'Please check your additional description')
+        return
       }
+      cleanedDescription = descValidation.cleaned
+    }
+
+    setLoading(true)
+    setGeneratedOffer('')
+    const cleanedName = validation.cleaned
+
+    try {
 
       // 确定职位类型和描述
       let positionType = ''
@@ -206,25 +221,41 @@ The humor should be:
 - Make the reader smile and laugh while still feeling the letter is professional
 - Examples: "We've calculated the opportunity cost of not hiring you, and it's simply too high", "Your salary package includes a generous coffee budget - we've found strong correlation between caffeine and productivity (though we can't prove causation)", "We promise you'll have access to our data - and trust us, the supply is elastic, but the demand for your skills is not"`
 
-      const response = await callChatGPT(prompt, systemMessage)
-      
-      const offerContent = response.content || `Dear ${name},\n\nCongratulations on your acceptance! Keep working hard!`
-      setGeneratedOffer(offerContent)
-    } catch (error) {
-      console.error('Error generating offer:', error)
-      // Show more detailed error message
-      let errorMessage = 'Error generating offer. Please try again.'
-      if (error.message) {
-        errorMessage = error.message
-      } else if (error.response?.data?.message) {
-        errorMessage = error.response.data.message
-      } else if (error.response?.data?.error) {
-        errorMessage = error.response.data.error
+      try {
+        const result = await callChatGPTStream(prompt, systemMessage, (chunk) => {
+          setGeneratedOffer((prev) => prev + chunk)
+        })
+        const content = (result?.content || '').trim()
+        if (content) setGeneratedOffer(content)
+        if (!content) setError('Generation returned no content. Please try again.')
+      } catch (streamErr) {
+        const msg = streamErr?.message || ''
+        if (msg.includes('404')) {
+          const response = await callChatGPT(prompt, systemMessage)
+          const offerContent = response?.content || `Dear ${cleanedName},\n\nCongratulations on your acceptance! Keep working hard!`
+          setGeneratedOffer(offerContent.trim())
+        } else {
+          throw streamErr
+        }
       }
-      alert(errorMessage)
+    } catch (err) {
+      console.error('Error generating offer:', err)
+      let errorMessage = 'Error generating offer. Please try again.'
+      if (err?.message) errorMessage = err.message
+      else if (err?.response?.data?.message) errorMessage = err.response.data.message
+      else if (err?.response?.data?.error) errorMessage = err.response.data.error
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleCopyText = () => {
+    if (!generatedOffer) return
+    navigator.clipboard.writeText(generatedOffer).then(() => {
+      setCopyFeedback('Copied!')
+      setTimeout(() => setCopyFeedback(''), 2000)
+    }).catch(() => setError('Copy failed.'))
   }
 
   const handleDownload = async () => {
@@ -239,7 +270,7 @@ The humor should be:
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = `phd-offer-${name.replace(/\s+/g, '-')}.txt`
+        a.download = `${getDownloadBasename()}.txt`
         a.click()
         URL.revokeObjectURL(url)
         setDownloading(false)
@@ -310,21 +341,19 @@ The humor should be:
       // Clean up
       document.body.removeChild(tempContainer)
 
-      // Save PDF
-      pdf.save(`phd-offer-${name.replace(/\s+/g, '-')}.pdf`)
+      pdf.save(`${getDownloadBasename()}.pdf`)
       setDownloading(false)
-    } catch (error) {
-      console.error('Error generating PDF:', error)
+    } catch (err) {
+      console.error('Error generating PDF:', err)
       setDownloading(false)
-      // Fallback to text download
       const blob = new Blob([generatedOffer], { type: 'text/plain' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `phd-offer-${name.replace(/\s+/g, '-')}.txt`
+      a.download = `${getDownloadBasename()}.txt`
       a.click()
       URL.revokeObjectURL(url)
-      alert('PDF generation failed. Downloaded as text file instead.')
+      setError('PDF generation failed. Downloaded as text file instead.')
     }
   }
 
@@ -347,6 +376,13 @@ The humor should be:
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {error && (
+          <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center justify-between gap-4">
+            <span>{error}</span>
+            <button type="button" onClick={() => setError('')} className="text-red-500 hover:text-red-700 shrink-0" aria-label="Dismiss">×</button>
+          </div>
+        )}
+
         {/* Input Section */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
           <h2 className="text-xl font-bold mb-6">Generate Your Fake Funny Offer Letter</h2>
@@ -502,7 +538,7 @@ The humor should be:
             disabled={loading || !name.trim()}
             className="px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? 'Generating Offer...' : `Generate ${offerType === 'academic' 
+            {loading ? 'Generating offer…' : `Generate ${offerType === 'academic' 
               ? academicPosition === 'phd' ? 'PhD' : academicPosition === 'professor' ? 'Professor' : 'Research Assistant'
               : industryPosition === 'consultant' ? 'Consultant' : industryPosition === 'analyst' ? 'Analyst' : industryPosition === 'researcher' ? 'Researcher' : 'NGO'
             } Offer Letter`}
@@ -510,29 +546,42 @@ The humor should be:
         </div>
 
         {/* Generated Offer */}
-        {generatedOffer && (
+        {(generatedOffer || loading) && (
           <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
               <h2 className="text-xl font-bold">
                 Your {offerType === 'academic' 
                   ? academicPosition === 'phd' ? 'PhD' : academicPosition === 'professor' ? 'Professor' : 'Research Assistant'
                   : industryPosition === 'consultant' ? 'Consultant' : industryPosition === 'analyst' ? 'Analyst' : industryPosition === 'researcher' ? 'Researcher' : 'NGO'
                 } Offer Letter
               </h2>
-              <button
-                onClick={handleDownload}
-                disabled={downloading}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                {downloading ? 'Generating PDF...' : 'Download PDF'}
-              </button>
+              <div className="flex items-center gap-2">
+                {generatedOffer && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleCopyText}
+                      className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition flex items-center gap-2"
+                    >
+                      {copyFeedback || 'Copy as text'}
+                    </button>
+                    <button
+                      onClick={handleDownload}
+                      disabled={downloading}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      {downloading ? 'Generating PDF…' : 'Download PDF'}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
             <div 
               id="offer-content"
-              className="bg-white border-2 border-gray-200 rounded-lg p-8 shadow-inner"
+              className="bg-white border-2 border-gray-200 rounded-lg p-8 shadow-inner min-h-[200px]"
               style={{
                 fontFamily: 'Arial, sans-serif',
                 fontSize: '12pt',
@@ -540,9 +589,14 @@ The humor should be:
                 color: '#000'
               }}
             >
-              <div className="prose max-w-none text-gray-800">
-                <ReactMarkdown>{generatedOffer}</ReactMarkdown>
-              </div>
+              {loading && !generatedOffer && (
+                <p className="text-gray-500">Generating offer…</p>
+              )}
+              {generatedOffer && (
+                <div className="prose max-w-none text-gray-800">
+                  <ReactMarkdown>{generatedOffer}</ReactMarkdown>
+                </div>
+              )}
             </div>
             <p className="mt-4 text-sm text-red-600 font-semibold text-center">
               ⚠️ DISCLAIMER: This is a fictional offer letter generated for motivational purposes only. This is not a real admission offer from any university.

@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { callChatGPT } from '../utils/api'
+import { callChatGPT, callChatGPTStream } from '../utils/api'
 import api from '../utils/api'
 import Logo from '../components/Logo'
 import { InlineMath, BlockMath } from 'react-katex'
@@ -313,9 +313,20 @@ function ProofWriter() {
   const [loading, setLoading] = useState(false)
   const [proofLoading, setProofLoading] = useState(false)
   const [error, setError] = useState('')
-  const [formulaViewMode, setFormulaViewMode] = useState('rendered') // 'latex' or 'rendered'
-  const [proofViewMode, setProofViewMode] = useState('rendered') // 'latex' or 'rendered'
+  const [formulaViewMode, setFormulaViewMode] = useState('rendered')
+  const [proofViewMode, setProofViewMode] = useState('rendered')
+  const [proofMode, setProofMode] = useState('proof') // 'proof' | 'explanation'
+  const [followUpMessages, setFollowUpMessages] = useState([])
+  const [followUpInput, setFollowUpInput] = useState('')
+  const [followUpLoading, setFollowUpLoading] = useState(false)
+  const [latexWarning, setLatexWarning] = useState('')
   const containerRef = useRef(null)
+  const proofEndRef = useRef(null)
+  const followUpEndRef = useRef(null)
+
+  useEffect(() => {
+    followUpEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [followUpMessages])
 
   // Process image file (used by both upload and paste)
   const processImageFile = useCallback((file, source = 'upload') => {
@@ -439,21 +450,20 @@ function ProofWriter() {
               setLatexFormula(latex)
               setError('')
             } else {
-              setError('Failed to recognize formula from image. Please try again with a clearer image.')
+              setError('Recognition failed. For best results use a clear, cropped image with good contrast. Try again with a clearer image.')
             }
           } else {
-            setError('Failed to recognize formula. The server did not return valid LaTeX.')
+            setError('Recognition failed: no valid LaTeX returned. Use a clear, cropped image with good contrast and try again.')
           }
         } catch (err) {
           console.error('Error recognizing formula:', err)
-          
           if (err.response) {
             const errorData = err.response.data
-            setError(errorData.message || errorData.error || 'Failed to recognize formula. Please try again.')
+            setError((errorData.message || errorData.error || 'Recognition failed. ') + ' For best results use a clear, cropped image with good contrast. You can also enter LaTeX directly below.')
           } else if (err.request) {
-            setError('Network error. Please check your internet connection and try again.')
+            setError('Network error. Check your connection and try again. You can also enter LaTeX directly below.')
           } else {
-            setError('An unexpected error occurred. Please try again.')
+            setError('Recognition failed. Try a clearer image or enter LaTeX directly below.')
           }
         } finally {
           setLoading(false)
@@ -473,71 +483,76 @@ function ProofWriter() {
     }
   }
 
-  // Generate proof
+  // Generate proof (streaming)
   const handleGenerateProof = async () => {
-    if (!latexFormula) {
-      setError('Please recognize the formula first')
+    const formula = latexFormula.trim()
+    if (!formula) {
+      setError('Please enter or recognize a formula first.')
       return
+    }
+
+    setLatexWarning('')
+    try {
+      const katex = await import('katex')
+      katex.default.renderToString(formula, { throwOnError: true, displayMode: true })
+    } catch (e) {
+      setLatexWarning('LaTeX may contain errors. You can still generate.')
+      if (!window.confirm('LaTeX could not be rendered. Generate anyway?')) return
     }
 
     setProofLoading(true)
     setError('')
     setProof('')
+    setFollowUpMessages([])
 
-    try {
-      const prompt = `Analyze the following mathematical formula and provide a proof or explanation:
+    const kind = proofMode === 'proof' ? 'rigorous mathematical proof' : 'intuitive explanation'
+    const structureHint = proofMode === 'proof'
+      ? 'Use clear sections with markdown headings: ### Statement, ### Proof, ### Remarks (if any).'
+      : 'Use clear sections if helpful, e.g. ### Explanation, ### Summary.'
 
-${latexFormula}
+    const prompt = `Analyze the following mathematical formula and provide a ${kind}:
+
+${formula}
 
 Requirements:
-1. If this formula can be proven, provide a complete, rigorous mathematical proof with:
-   - Clear statement of what is being proven
-   - Step-by-step logical reasoning
-   - Proper mathematical notation using LaTeX
+1. Provide a ${kind} with:
+   - Clear statement of what is being shown
+   - Step-by-step reasoning (rigorous if proof, intuitive if explanation)
+   - Proper mathematical notation using LaTeX ($...$ for inline, $$...$$ for display)
    - Clear conclusion
-   - Format the proof professionally with proper structure
+${structureHint}
+2. If the formula cannot be proven or explained with the given information, say so clearly and briefly why.
+3. Use proper LaTeX for all mathematical expressions. Return in English.`
 
-2. If this formula cannot be proven (e.g., it's a definition, an empirical relationship, a conjecture, or requires assumptions that cannot be verified), respond with:
-   "I cannot provide a proof for this formula at this time. This may be because:
-   - It is a definition rather than a theorem
-   - It requires empirical verification
-   - It is a conjecture that has not been proven
-   - Additional context or assumptions are needed"
+    const systemMessage = `You are an expert mathematician. The user wants a ${proofMode === 'proof' ? 'rigorous proof' : 'clear intuitive explanation'} for a formula. Be precise and use LaTeX. Use markdown headings (###) for structure when appropriate.`
 
-3. Use proper LaTeX formatting for all mathematical expressions
-4. Be rigorous and mathematically sound
-5. If providing a proof, make it clear, well-structured, and easy to follow
-
-Return the proof or explanation in English, formatted with proper LaTeX for mathematical expressions.`
-
-      const systemMessage = `You are an expert mathematician and mathematical logician. Your task is to analyze mathematical formulas and provide rigorous proofs when possible. You have deep knowledge of:
-- Mathematical analysis, algebra, calculus, and advanced mathematics
-- Proof techniques (direct proof, proof by contradiction, induction, etc.)
-- Mathematical logic and rigor
-- When a statement can be proven vs. when it requires empirical verification or additional assumptions
-
-Always be honest about whether a proof is possible. If a formula cannot be proven with the given information, clearly state why.`
-
-      const response = await callChatGPT(prompt, systemMessage)
-      
-      const proofText = response.content || ''
-      
-      if (proofText.trim().length > 0) {
-        setProof(proofText.trim())
-        setError('')
-      } else {
-        setError('Failed to generate proof. Please try again.')
+    try {
+      try {
+        const result = await callChatGPTStream(prompt, systemMessage, (chunk) => {
+          setProof((prev) => prev + chunk)
+        })
+        const proofText = (result?.content || '').trim()
+        if (proofText) setProof(proofText)
+        if (!proofText) setError('Proof generation returned no content. You can try again or rephrase.')
+      } catch (streamErr) {
+        const msg = streamErr?.message || ''
+        // If stream endpoint is missing (404), fall back to non-streaming
+        if (msg.includes('404')) {
+          const res = await callChatGPT(prompt, systemMessage, { temperature: 0.3 })
+          const proofText = (res?.content || '').trim()
+          if (proofText) setProof(proofText)
+          else setError('Proof generation returned no content. You can try again or rephrase.')
+        } else {
+          throw streamErr
+        }
       }
     } catch (err) {
       console.error('Error generating proof:', err)
-      
-      if (err.response) {
-        const errorData = err.response.data
-        setError(errorData.message || errorData.error || 'Failed to generate proof. Please try again.')
-      } else if (err.request) {
-        setError('Network error. Please check your internet connection and try again.')
+      const msg = err?.message || ''
+      if (msg.includes('Network') || err?.request) {
+        setError('Network error. Check your connection and try again.')
       } else {
-        setError('An unexpected error occurred. Please try again.')
+        setError('Proof generation failed: ' + (msg || 'Please try again.'))
       }
     } finally {
       setProofLoading(false)
@@ -551,9 +566,42 @@ Always be honest about whether a proof is possible. If a formula cannot be prove
     setLatexFormula('')
     setProof('')
     setError('')
+    setFollowUpMessages([])
+    setFollowUpInput('')
+    setLatexWarning('')
     const fileInput = document.getElementById('formula-image-upload')
-    if (fileInput) {
-      fileInput.value = ''
+    if (fileInput) fileInput.value = ''
+  }
+
+  const handleCopyProof = (asFormat) => {
+    const text = proof || ''
+    if (!text) return
+    navigator.clipboard.writeText(text).then(() => {
+      setError('')
+      const label = asFormat === 'latex' ? 'LaTeX' : 'Markdown'
+      setLatexWarning(`Copied as ${label}!`)
+      setTimeout(() => setLatexWarning(''), 2000)
+    }).catch(() => setError('Copy failed.'))
+  }
+
+  const handleFollowUp = async () => {
+    const q = followUpInput.trim()
+    if (!q || !proof) return
+    const userMsg = { role: 'user', content: q }
+    setFollowUpMessages((prev) => [...prev, userMsg])
+    setFollowUpInput('')
+    setFollowUpLoading(true)
+    setError('')
+    const history = followUpMessages.concat(userMsg).map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n')
+    const prompt = `Context: formula and proof/explanation below. User then asked a follow-up. Answer concisely with LaTeX when needed.\n\nFormula:\n${latexFormula}\n\nProof/Explanation:\n${proof}\n\nConversation:\n${history}\n\nAnswer the last user question.`
+    try {
+      const res = await callChatGPT(prompt, 'You are a helpful mathematician. Answer follow-up questions about the formula and proof. Use LaTeX for math.')
+      const content = res?.content?.trim() || ''
+      setFollowUpMessages((prev) => [...prev, { role: 'assistant', content }])
+    } catch (err) {
+      setError('Follow-up answer failed: ' + (err?.message || 'Try again.'))
+    } finally {
+      setFollowUpLoading(false)
     }
   }
 
@@ -578,18 +626,19 @@ Always be honest about whether a proof is possible. If a formula cannot be prove
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Instructions */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-          <h3 className="font-semibold text-blue-900 mb-2">📝 How to use:</h3>
-          <ol className="list-decimal list-inside text-blue-800 space-y-1 text-sm">
-            <li>Upload or paste a screenshot of a mathematical formula</li>
-            <li>Click "Recognize Formula" to identify the formula</li>
-            <li>Click "Explain Formula" to generate a proof or explanation</li>
-            <li>If the formula can be proven, you'll get a complete mathematical proof</li>
-          </ol>
+          <h3 className="font-semibold text-blue-900 mb-2">📝 How to use</h3>
+          <ul className="list-disc list-inside text-blue-800 space-y-1 text-sm">
+            <li><strong>From image:</strong> Upload or paste a screenshot, then click &quot;Recognize Formula&quot;. For best results use a clear, cropped image with good contrast.</li>
+            <li><strong>Direct LaTeX:</strong> You can also type or paste LaTeX in the &quot;Enter LaTeX directly&quot; box—no image needed.</li>
+            <li>Edit the formula in LaTeX mode if needed, then choose <strong>Proof</strong> (rigorous) or <strong>Explanation</strong> (intuitive) and click &quot;Generate proof / explanation&quot;.</li>
+            <li>If you get an explanation instead of a proof, the formula may be a definition or not fully provable—you can ask a follow-up below the result.</li>
+          </ul>
         </div>
 
         {/* Image Upload Section */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">
           <h2 className="text-xl font-bold mb-4">Upload Formula Image</h2>
+          <p className="text-gray-600 text-sm mb-2">For best results: use a clear, cropped image with good contrast.</p>
           <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center mb-4">
             <input
               type="file"
@@ -627,6 +676,18 @@ Always be honest about whether a proof is possible. If a formula cannot be prove
             )}
           </div>
 
+          {/* Direct LaTeX input */}
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Or enter LaTeX directly</label>
+            <textarea
+              value={latexFormula}
+              onChange={(e) => { setLatexFormula(e.target.value); setError(''); setLatexWarning('') }}
+              placeholder="e.g. E = mc^2 or \int_0^1 x^2 \, dx"
+              className="w-full border border-gray-300 rounded-lg p-3 font-mono text-sm min-h-[80px]"
+              rows={3}
+            />
+          </div>
+
           {error && (
             <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
               {error}
@@ -653,18 +714,16 @@ Always be honest about whether a proof is possible. If a formula cannot be prove
           </div>
         </div>
 
-        {/* Recognized Formula */}
-        {latexFormula && (
+        {/* Formula and Generate */}
+        {latexFormula.trim() && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Recognized Formula</h2>
+              <h2 className="text-xl font-bold">Formula</h2>
               <div className="flex gap-2">
                 <button
                   onClick={() => setFormulaViewMode('rendered')}
                   className={`px-3 py-1 text-sm rounded-lg transition ${
-                    formulaViewMode === 'rendered'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    formulaViewMode === 'rendered' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
                 >
                   Rendered
@@ -672,78 +731,145 @@ Always be honest about whether a proof is possible. If a formula cannot be prove
                 <button
                   onClick={() => setFormulaViewMode('latex')}
                   className={`px-3 py-1 text-sm rounded-lg transition ${
-                    formulaViewMode === 'latex'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    formulaViewMode === 'latex' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
                 >
-                  LaTeX
+                  LaTeX (editable)
                 </button>
               </div>
             </div>
-            
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
               {formulaViewMode === 'rendered' ? (
                 <div className="flex items-center justify-center min-h-[60px]">
                   <SafeBlockMath math={latexFormula} />
                 </div>
               ) : (
-                <pre className="whitespace-pre-wrap break-words font-mono text-sm text-gray-800">
-                  {latexFormula}
-                </pre>
+                <textarea
+                  value={latexFormula}
+                  onChange={(e) => setLatexFormula(e.target.value)}
+                  className="w-full whitespace-pre-wrap break-words font-mono text-sm text-gray-800 bg-transparent border-0 resize-y min-h-[60px]"
+                  rows={4}
+                />
               )}
             </div>
-            
-            <button
-              onClick={handleGenerateProof}
-              disabled={proofLoading}
-              className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {proofLoading ? 'Generating Proof...' : 'Explain Formula'}
-            </button>
+            {latexWarning && (
+              <p className="text-amber-700 text-sm mb-2">{latexWarning}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm text-gray-600">Output:</span>
+              <select
+                value={proofMode}
+                onChange={(e) => setProofMode(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="proof">Proof (rigorous)</option>
+                <option value="explanation">Explanation (intuitive)</option>
+              </select>
+              <button
+                onClick={handleGenerateProof}
+                disabled={proofLoading}
+                className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {proofLoading ? 'Generating…' : 'Generate proof / explanation'}
+              </button>
+            </div>
           </div>
         )}
 
         {/* Generated Proof */}
-        {proof && (
+        {(proof || proofLoading) && (
           <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Mathematical Proof / Explanation</h2>
-              <div className="flex gap-2">
+            <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
+              <h2 className="text-xl font-bold">Proof / Explanation</h2>
+              <div className="flex flex-wrap gap-2 items-center">
+                {proof && (
+                  <>
+                    <button
+                      onClick={() => handleCopyProof('latex')}
+                      className="px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+                    >
+                      Copy as LaTeX
+                    </button>
+                    <button
+                      onClick={() => handleCopyProof('markdown')}
+                      className="px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+                    >
+                      Copy as Markdown
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={() => setProofViewMode('rendered')}
-                  className={`px-3 py-1 text-sm rounded-lg transition ${
-                    proofViewMode === 'rendered'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                  }`}
+                  className={`px-3 py-1 text-sm rounded-lg transition ${proofViewMode === 'rendered' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
                 >
                   Rendered
                 </button>
                 <button
                   onClick={() => setProofViewMode('latex')}
-                  className={`px-3 py-1 text-sm rounded-lg transition ${
-                    proofViewMode === 'latex'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                  }`}
+                  className={`px-3 py-1 text-sm rounded-lg transition ${proofViewMode === 'latex' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
                 >
                   LaTeX
                 </button>
               </div>
             </div>
-            
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-6">
-              {proofViewMode === 'rendered' ? (
-                <div className="prose max-w-none">
-                  <RenderedProof text={proof} />
-                </div>
-              ) : (
-                <pre className="whitespace-pre-wrap break-words text-sm text-gray-800 font-mono">
-                  {proof}
-                </pre>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 min-h-[120px]">
+              {proofLoading && !proof && <p className="text-gray-500">Generating proof…</p>}
+              {proof && (
+                proofViewMode === 'rendered' ? (
+                  <div className="prose max-w-none">
+                    <RenderedProof text={proof} />
+                  </div>
+                ) : (
+                  <pre className="whitespace-pre-wrap break-words text-sm text-gray-800 font-mono">
+                    {proof}
+                  </pre>
+                )
               )}
             </div>
+
+            {/* Follow-up Q&A */}
+            {proof && (
+              <div className="mt-6 pt-6 border-t border-gray-200">
+                <h3 className="font-semibold text-gray-800 mb-2">Follow-up questions</h3>
+                {followUpMessages.length > 0 && (
+                  <div className="space-y-3 mb-4">
+                    {followUpMessages.map((msg, i) => (
+                      <div
+                        key={i}
+                        className={`rounded-lg p-3 ${msg.role === 'user' ? 'bg-indigo-50 text-gray-800' : 'bg-gray-100 text-gray-800'}`}
+                      >
+                        <span className="text-xs font-medium text-gray-500 block mb-1">
+                          {msg.role === 'user' ? 'You' : 'Assistant'}
+                        </span>
+                        {msg.role === 'assistant' ? (
+                          <div className="prose prose-sm max-w-none"><RenderedProof text={msg.content} /></div>
+                        ) : (
+                          <p className="whitespace-pre-wrap">{msg.content}</p>
+                        )}
+                      </div>
+                    ))}
+                    <div ref={followUpEndRef} />
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={followUpInput}
+                    onChange={(e) => setFollowUpInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleFollowUp()}
+                    placeholder="Ask a follow-up about the formula or proof…"
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  />
+                  <button
+                    onClick={handleFollowUp}
+                    disabled={followUpLoading || !followUpInput.trim()}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {followUpLoading ? '…' : 'Ask'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>

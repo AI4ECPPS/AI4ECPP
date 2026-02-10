@@ -67,6 +67,8 @@ const authenticateToken = (req, res, next) => {
   })
 }
 
+export { authenticateToken }
+
 // Sign up
 router.post('/signup', 
   validateInput({ checkProfanity: true, filterProfanity: false, maxLength: 500 }),

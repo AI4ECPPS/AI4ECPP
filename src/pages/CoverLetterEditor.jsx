@@ -1,30 +1,90 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Logo from '../components/Logo'
-import { callChatGPT } from '../utils/api'
+import { callChatGPT, callChatGPTStream } from '../utils/api'
+
+function parseJsonResponse(content) {
+  let parsed = null
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/)
+    if (jsonMatch) {
+      try {
+        parsed = JSON.parse(jsonMatch[1].trim())
+      } catch {}
+    }
+    if (!parsed) {
+      const jsonStart = content.indexOf('{')
+      const jsonEnd = content.lastIndexOf('}')
+      if (jsonStart !== -1 && jsonEnd !== -1) {
+        try {
+          parsed = JSON.parse(content.substring(jsonStart, jsonEnd + 1))
+        } catch {}
+      }
+    }
+  }
+  return parsed
+}
 
 function CoverLetterEditor() {
   const navigate = useNavigate()
   
-  // Input states
   const [coverLetter, setCoverLetter] = useState('')
   const [jobDescription, setJobDescription] = useState('')
   const [resume, setResume] = useState('')
   const [showResumeInput, setShowResumeInput] = useState(false)
   
-  // Output states
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [streamedContent, setStreamedContent] = useState('')
   const [revisedLetter, setRevisedLetter] = useState('')
   const [suggestions, setSuggestions] = useState([])
   const [highlightedContent, setHighlightedContent] = useState('')
+  const [copyFeedback, setCopyFeedback] = useState('')
+
+  const getDownloadFilename = () => {
+    const d = new Date()
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    return `revised-cover-letter-${dateStr}.txt`
+  }
+
+  const applyParsedResult = (content) => {
+    const parsed = parseJsonResponse(content)
+    if (parsed) {
+      setSuggestions(parsed.suggestions || [])
+      setRevisedLetter(parsed.revisedLetter || '')
+      if (parsed.changes && parsed.changes.length > 0 && parsed.revisedLetter) {
+        let highlighted = parsed.revisedLetter
+        parsed.changes.forEach((change) => {
+          if (change.revised && highlighted.includes(change.revised)) {
+            highlighted = highlighted.replace(
+              change.revised,
+              `<mark class="bg-yellow-200 px-0.5 rounded" title="Changed from: ${change.original?.substring(0, 50)}...">${change.revised}</mark>`
+            )
+          }
+        })
+        setHighlightedContent(highlighted)
+      } else {
+        setHighlightedContent(parsed.revisedLetter || '')
+      }
+    } else {
+      setRevisedLetter(content)
+      setHighlightedContent(content)
+      setSuggestions([{
+        category: 'Note',
+        issue: 'Response was not in expected format; showing raw response.',
+        recommendation: 'You can still copy or download the text above.'
+      }])
+    }
+    setStreamedContent('')
+  }
 
   const handleAnalyze = async () => {
     if (!coverLetter.trim()) {
       setError('Please enter your cover letter')
       return
     }
-    
     if (!jobDescription.trim()) {
       setError('Please enter the job description')
       return
@@ -35,9 +95,9 @@ function CoverLetterEditor() {
     setRevisedLetter('')
     setSuggestions([])
     setHighlightedContent('')
+    setStreamedContent('')
 
-    try {
-      const prompt = `You are an expert career coach and cover letter editor. Analyze the following cover letter for a job application and provide specific, actionable revision suggestions.
+    const prompt = `You are an expert career coach and cover letter editor. Analyze the following cover letter for a job application and provide specific, actionable revision suggestions.
 
 ## Original Cover Letter:
 ${coverLetter}
@@ -83,81 +143,32 @@ Important:
 - Include 3-6 specific suggestions
 - Identify 3-8 specific text changes`
 
-      const systemMessage = `You are an expert career counselor and professional cover letter editor with years of experience helping candidates land their dream jobs. You understand what hiring managers look for and how to make cover letters stand out. Always respond with valid JSON.`
+    const systemMessage = `You are an expert career counselor and professional cover letter editor with years of experience helping candidates land their dream jobs. You understand what hiring managers look for and how to make cover letters stand out. Always respond with valid JSON.`
 
-      const response = await callChatGPT(prompt, systemMessage)
-      
-      // Parse the response
-      let content = response.content || ''
-      
-      // Try to extract JSON from the response
-      let parsed = null
-      
-      // First try to parse as-is
+    try {
       try {
-        parsed = JSON.parse(content)
-      } catch {
-        // Try to extract JSON from markdown code blocks
-        const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/)
-        if (jsonMatch) {
-          try {
-            parsed = JSON.parse(jsonMatch[1].trim())
-          } catch {
-            // Continue to next attempt
-          }
-        }
-        
-        // Try to find JSON object in the response
-        if (!parsed) {
-          const jsonStart = content.indexOf('{')
-          const jsonEnd = content.lastIndexOf('}')
-          if (jsonStart !== -1 && jsonEnd !== -1) {
-            try {
-              parsed = JSON.parse(content.substring(jsonStart, jsonEnd + 1))
-            } catch {
-              // Give up on JSON parsing
-            }
-          }
-        }
-      }
-
-      if (parsed) {
-        setSuggestions(parsed.suggestions || [])
-        setRevisedLetter(parsed.revisedLetter || '')
-        
-        // Create highlighted version
-        if (parsed.changes && parsed.changes.length > 0 && parsed.revisedLetter) {
-          let highlighted = parsed.revisedLetter
-          
-          // Mark each changed section with special markers
-          parsed.changes.forEach((change, index) => {
-            if (change.revised && highlighted.includes(change.revised)) {
-              // Wrap the revised text with markers for highlighting
-              highlighted = highlighted.replace(
-                change.revised,
-                `<mark class="bg-yellow-200 px-0.5 rounded" title="Changed from: ${change.original?.substring(0, 50)}...">${change.revised}</mark>`
-              )
-            }
-          })
-          
-          setHighlightedContent(highlighted)
+        const result = await callChatGPTStream(prompt, systemMessage, (chunk) => {
+          setStreamedContent((prev) => prev + chunk)
+        })
+        const content = (result?.content || '').trim()
+        if (content) applyParsedResult(content)
+        else setError('No response received. Please try again.')
+      } catch (streamErr) {
+        const msg = streamErr?.message || ''
+        if (msg.includes('404')) {
+          const response = await callChatGPT(prompt, systemMessage)
+          const content = response?.content || ''
+          if (content) applyParsedResult(content)
+          else setError('No response received. Please try again.')
         } else {
-          setHighlightedContent(parsed.revisedLetter || '')
+          throw streamErr
         }
-      } else {
-        // Fallback: show the raw response
-        setRevisedLetter(content)
-        setHighlightedContent(content)
-        setSuggestions([{
-          category: 'Note',
-          issue: 'Could not parse structured response',
-          recommendation: 'Please review the suggestions above'
-        }])
       }
-
     } catch (err) {
       console.error('Error analyzing cover letter:', err)
-      setError('Failed to analyze cover letter. Please try again.')
+      setStreamedContent('')
+      const msg = err?.message || ''
+      setError(msg.includes('Network') || err?.request ? 'Network error. Please try again.' : (msg || 'Failed to analyze cover letter. Please try again.'))
     } finally {
       setLoading(false)
     }
@@ -167,20 +178,22 @@ Important:
     setCoverLetter('')
     setJobDescription('')
     setResume('')
+    setStreamedContent('')
     setRevisedLetter('')
     setSuggestions([])
     setHighlightedContent('')
     setError('')
+    setCopyFeedback('')
   }
 
   const handleCopyRevised = () => {
+    if (!revisedLetter) return
     navigator.clipboard.writeText(revisedLetter)
       .then(() => {
-        alert('Revised cover letter copied to clipboard!')
+        setCopyFeedback('Copied!')
+        setTimeout(() => setCopyFeedback(''), 2000)
       })
-      .catch(() => {
-        alert('Failed to copy. Please select and copy manually.')
-      })
+      .catch(() => setError('Copy failed. Please select and copy manually.'))
   }
 
   const handleDownload = () => {
@@ -188,7 +201,7 @@ Important:
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'revised_cover_letter.txt'
+    a.download = getDownloadFilename()
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -287,8 +300,9 @@ Important:
 
             {/* Error Display */}
             {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-                {error}
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center justify-between gap-4">
+                <span>{error}</span>
+                <button type="button" onClick={() => setError('')} className="text-red-500 hover:text-red-700 shrink-0" aria-label="Dismiss">×</button>
               </div>
             )}
 
@@ -343,6 +357,21 @@ Important:
               </div>
             )}
 
+            {/* Loading placeholder (stream runs in background; we show parsed result when done) */}
+            {loading && (
+              <div className="bg-white rounded-lg shadow p-6">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Generating revision…</h3>
+                <p className="text-gray-500">Suggestions and revised letter will appear here when ready.</p>
+                <div className="mt-4 flex items-center gap-2">
+                  <svg className="animate-spin h-5 w-5 text-indigo-600" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span className="text-sm text-gray-500">Analyzing your cover letter…</span>
+                </div>
+              </div>
+            )}
+
             {/* Revised Letter with Highlights */}
             {highlightedContent && (
               <div className="bg-white rounded-lg shadow p-6">
@@ -350,10 +379,11 @@ Important:
                   <h3 className="text-lg font-bold text-gray-800">📝 Revised Cover Letter</h3>
                   <div className="flex gap-2">
                     <button
+                      type="button"
                       onClick={handleCopyRevised}
                       className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition"
                     >
-                      📋 Copy
+                      {copyFeedback === 'Copied!' ? copyFeedback : '📋 Copy'}
                     </button>
                     <button
                       onClick={handleDownload}
@@ -376,7 +406,7 @@ Important:
               </div>
             )}
 
-            {/* Original vs Revised Comparison (if no results yet) */}
+            {/* Empty state */}
             {!highlightedContent && !loading && (
               <div className="bg-white rounded-lg shadow p-12 text-center">
                 <div className="text-6xl mb-4">✉️</div>

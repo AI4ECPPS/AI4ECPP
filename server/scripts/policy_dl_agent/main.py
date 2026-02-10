@@ -11,7 +11,7 @@ import torch
 import traceback
 import base64
 import io
-from typing import Dict, Any
+from typing import Dict, Any, Tuple, Optional, List
 
 # Suppress warnings
 import warnings
@@ -119,48 +119,28 @@ def generate_plots(history: Dict, predictions: np.ndarray = None,
         return []
 
 
-def handle_train(input_data: Dict) -> Dict:
-    """Handle training request."""
-    # Extract parameters
+def _train_single_model(input_data: Dict, data: Dict, processor: PanelDataProcessor,
+                        device: str, seed: Optional[int] = None) -> Tuple[Dict, Dict, np.ndarray]:
+    """Train one model; return model_state, training_result, test_predictions."""
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
     csv_data = input_data.get('data')
-    data_type = input_data.get('dataType', 'panel')  # 'panel' or 'cross_section'
+    data_type = input_data.get('dataType', 'panel')
     entity_col = input_data.get('entityCol')
     time_col = input_data.get('timeCol')
     feature_cols = input_data.get('featureCols', [])
     target_cols = input_data.get('targetCols', [])
-    
-    # Model parameters
     d_model = input_data.get('dModel', 128)
     num_heads = input_data.get('numHeads', 8)
     num_layers = input_data.get('numLayers', 4)
     d_ff = input_data.get('dFf', 512)
     dropout = input_data.get('dropout', 0.1)
-    
-    # Training parameters
     learning_rate = input_data.get('learningRate', 1e-4)
     batch_size = input_data.get('batchSize', 32)
     epochs = input_data.get('epochs', 100)
     lookback = input_data.get('lookback', 5)
     pred_horizon = input_data.get('predHorizon', 1)
-    
-    # Process data
-    processor = PanelDataProcessor()
-    df = processor.load_csv(csv_data)
-    
-    data = processor.prepare_data(
-        df=df,
-        entity_col=entity_col,
-        time_col=time_col,
-        feature_cols=feature_cols,
-        target_cols=target_cols,
-        lookback=lookback,
-        pred_horizon=pred_horizon,
-        data_type=data_type
-    )
-    
-    # Create model
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    
     model = PanelTransformer(
         n_features=data['n_features'],
         n_targets=data['n_targets'],
@@ -173,54 +153,118 @@ def handle_train(input_data: Dict) -> Dict:
         lookback=lookback,
         pred_horizon=pred_horizon
     )
-    
-    # Create trainer
-    trainer = PolicyTrainer(
-        model=model,
-        learning_rate=learning_rate,
-        device=device
-    )
-    
-    # Train
+    trainer = PolicyTrainer(model=model, learning_rate=learning_rate, device=device)
     training_result = trainer.train(
-        data=data,
-        epochs=epochs,
-        batch_size=batch_size,
-        early_stopping_patience=15
+        data=data, epochs=epochs, batch_size=batch_size, early_stopping_patience=15
     )
-    
-    # Compute feature importance
-    feature_importance = compute_feature_importance(
-        model=model,
-        X=data['X_test'],
-        entity_ids=data['entity_test'],
-        feature_names=feature_cols,
-        device=device
-    )
-    
-    # Get test predictions for plotting
     model.eval()
     with torch.no_grad():
         X_test = torch.tensor(data['X_test'], dtype=torch.float32).to(device)
         entity_test = torch.tensor(data['entity_test'], dtype=torch.long).to(device)
         test_predictions, _ = model(X_test, entity_test)
         test_predictions = test_predictions.cpu().numpy()
-    
-    # Generate plots
+    model_state = {
+        'state_dict': {k: v.cpu().tolist() for k, v in model.state_dict().items()},
+        'config': model.get_config(),
+        'data_params': processor.get_normalization_params()
+    }
+    return model_state, training_result, test_predictions
+
+
+def handle_train(input_data: Dict) -> Dict:
+    """Handle training request. Supports useEnsemble for uncertainty (3 models)."""
+    csv_data = input_data.get('data')
+    data_type = input_data.get('dataType', 'panel')
+    entity_col = input_data.get('entityCol')
+    time_col = input_data.get('timeCol')
+    feature_cols = input_data.get('featureCols', [])
+    target_cols = input_data.get('targetCols', [])
+    d_model = input_data.get('dModel', 128)
+    num_heads = input_data.get('numHeads', 8)
+    num_layers = input_data.get('numLayers', 4)
+    d_ff = input_data.get('dFf', 512)
+    dropout = input_data.get('dropout', 0.1)
+    learning_rate = input_data.get('learningRate', 1e-4)
+    batch_size = input_data.get('batchSize', 32)
+    epochs = input_data.get('epochs', 100)
+    lookback = input_data.get('lookback', 5)
+    pred_horizon = input_data.get('predHorizon', 1)
+    use_ensemble = input_data.get('useEnsemble', False)
+    processor = PanelDataProcessor()
+    df = processor.load_csv(csv_data)
+    data = processor.prepare_data(
+        df=df, entity_col=entity_col, time_col=time_col,
+        feature_cols=feature_cols, target_cols=target_cols,
+        lookback=lookback, pred_horizon=pred_horizon, data_type=data_type
+    )
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if use_ensemble:
+        model_states = []
+        all_preds = []
+        seeds = [42, 123, 456]
+        training_result_0 = None
+        for i, seed in enumerate(seeds):
+            model_state, training_result, test_predictions = _train_single_model(
+                input_data, data, processor, device, seed=seed
+            )
+            model_states.append(model_state)
+            all_preds.append(test_predictions)
+            if i == 0:
+                training_result_0 = training_result
+        # Feature importance from first model
+        config = model_states[0]['config']
+        model0 = PanelTransformer.from_config(config)
+        state_dict = {k: torch.tensor(v) for k, v in model_states[0]['state_dict'].items()}
+        model0.load_state_dict(state_dict)
+        model0.to(device)
+        feature_importance = compute_feature_importance(
+            model=model0, X=data['X_test'], entity_ids=data['entity_test'],
+            feature_names=feature_cols, device=device
+        )
+        test_predictions = np.stack(all_preds, axis=0)
+        pred_mean = np.mean(test_predictions, axis=0)
+        pred_std = np.std(test_predictions, axis=0)
+        plots = generate_plots(
+            history=training_result_0['history'],
+            predictions=pred_mean,
+            targets=data['y_test'],
+            feature_importance=feature_importance
+        )
+        return {
+            'success': True,
+            'epochsTrained': training_result_0['epochs_trained'],
+            'bestValLoss': training_result_0['best_val_loss'],
+            'testMetrics': training_result_0['test_metrics'],
+            'featureImportance': feature_importance,
+            'history': {
+                'trainLoss': training_result_0['history']['train_loss'],
+                'valLoss': training_result_0['history']['val_loss']
+            },
+            'plots': plots,
+            'modelState': None,
+            'modelStates': model_states,
+            'useEnsemble': True,
+            'predictionStd': pred_std.tolist()
+        }
+    # Single model (original)
+    model_state, training_result, test_predictions = _train_single_model(
+        input_data, data, processor, device, seed=42
+    )
+    config = model_state['config']
+    model = PanelTransformer.from_config(config)
+    state_dict = {k: torch.tensor(v) for k, v in model_state['state_dict'].items()}
+    model.load_state_dict(state_dict)
+    model.to(device)
+    feature_importance = compute_feature_importance(
+        model=model, X=data['X_test'], entity_ids=data['entity_test'],
+        feature_names=feature_cols, device=device
+    )
     plots = generate_plots(
         history=training_result['history'],
         predictions=test_predictions,
         targets=data['y_test'],
         feature_importance=feature_importance
     )
-    
-    # Save model state for later use
-    model_state = {
-        'state_dict': {k: v.cpu().tolist() for k, v in model.state_dict().items()},
-        'config': model.get_config(),
-        'data_params': processor.get_normalization_params()
-    }
-    
     return {
         'success': True,
         'epochsTrained': training_result['epochs_trained'],
@@ -236,43 +280,50 @@ def handle_train(input_data: Dict) -> Dict:
     }
 
 
-def handle_optimize(input_data: Dict) -> Dict:
-    """Handle optimization request."""
-    # Load model state
-    model_state = input_data.get('modelState')
-    if not model_state:
-        return {'success': False, 'error': 'No model state provided. Train a model first.'}
-    
-    # Recreate model
-    config = model_state['config']
+def _load_models_from_state(model_state_or_states) -> Tuple[PanelTransformer, Optional[List[PanelTransformer]]]:
+    """Load one model or a list of models from modelState or modelStates."""
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    
+    if isinstance(model_state_or_states, list) and len(model_state_or_states) > 0:
+        models = []
+        for ms in model_state_or_states:
+            config = ms['config']
+            m = PanelTransformer.from_config(config)
+            state_dict = {k: torch.tensor(v) for k, v in ms['state_dict'].items()}
+            m.load_state_dict(state_dict)
+            m.to(device)
+            m.eval()
+            models.append(m)
+        return models[0], models
+    ms = model_state_or_states
+    config = ms['config']
     model = PanelTransformer.from_config(config)
-    
-    # Load weights
-    state_dict = {}
-    for k, v in model_state['state_dict'].items():
-        state_dict[k] = torch.tensor(v)
+    state_dict = {k: torch.tensor(v) for k, v in ms['state_dict'].items()}
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
-    
-    # Load data processor params
+    return model, None
+
+
+def handle_optimize(input_data: Dict) -> Dict:
+    """Handle optimization request. Supports constraints, sequenceHorizon, and modelStates (ensemble)."""
+    model_state = input_data.get('modelState')
+    model_states = input_data.get('modelStates')
+    if not model_state and not model_states:
+        return {'success': False, 'error': 'No model state provided. Train a model first.'}
+    state_to_use = model_states if model_states else model_state
+    model, models = _load_models_from_state(state_to_use)
+    config = (model_states[0] if model_states else model_state)['config']
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     processor = PanelDataProcessor()
-    processor.load_normalization_params(model_state['data_params'])
-    
-    # Load reward function
+    processor.load_normalization_params((model_states[0] if model_states else model_state)['data_params'])
     reward_code = input_data.get('rewardCode', '')
     if not reward_code:
         return {'success': False, 'error': 'No reward function provided.'}
-    
     reward_loader = RewardFunctionLoader()
     try:
         reward_loader.load_from_code(reward_code)
     except Exception as e:
         return {'success': False, 'error': f'Failed to load reward function: {str(e)}'}
-    
-    # Get optimization parameters
     csv_data = input_data.get('data')
     data_type = input_data.get('dataType', 'panel')
     entity_col = input_data.get('entityCol')
@@ -280,86 +331,96 @@ def handle_optimize(input_data: Dict) -> Dict:
     feature_cols = input_data.get('featureCols', [])
     target_cols = input_data.get('targetCols', [])
     policy_features = input_data.get('policyFeatures', [])
-    
-    # Bounds for policy parameters
     bounds_input = input_data.get('bounds', {})
     bounds = []
     for pf in policy_features:
-        if pf in bounds_input:
-            bounds.append((bounds_input[pf]['min'], bounds_input[pf]['max']))
+        if pf in bounds_input and isinstance(bounds_input[pf], dict):
+            bounds.append((bounds_input[pf].get('min', -1.0), bounds_input[pf].get('max', 1.0)))
         else:
-            bounds.append((-1.0, 1.0))  # Default normalized bounds
-    
-    # Prepare data
+            bounds.append((-1.0, 1.0))
     df = processor.load_csv(csv_data)
     data = processor.prepare_data(
-        df=df,
-        entity_col=entity_col,
-        time_col=time_col,
-        feature_cols=feature_cols,
-        target_cols=target_cols,
-        lookback=config['lookback'],
-        pred_horizon=config['pred_horizon'],
-        data_type=data_type
+        df=df, entity_col=entity_col, time_col=time_col,
+        feature_cols=feature_cols, target_cols=target_cols,
+        lookback=config['lookback'], pred_horizon=config['pred_horizon'], data_type=data_type
     )
-    
-    # Create optimizer
     method = input_data.get('optimizationMethod', 'differential_evolution')
     max_iterations = input_data.get('maxIterations', 100)
-    
+    constraints = input_data.get('constraints', [])  # [ { variable, type: 'max'|'min', value } ]
+    sequence_horizon = int(input_data.get('sequenceHorizon', 1))
     optimizer = PolicyOptimizer(
         model=model,
         reward_loader=reward_loader,
-        device=device
+        device=device,
+        models=models
     )
-    
-    # Run optimization
-    result = optimizer.optimize(
-        base_features=data['X_test'],
-        entity_ids=data['entity_test'],
-        policy_feature_names=policy_features,
-        feature_names=feature_cols,
-        target_names=target_cols,
-        bounds=bounds,
-        method=method,
-        max_iterations=max_iterations
-    )
-    
+    if sequence_horizon <= 1:
+        result = optimizer.optimize(
+            base_features=data['X_test'],
+            entity_ids=data['entity_test'],
+            policy_feature_names=policy_features,
+            feature_names=feature_cols,
+            target_names=target_cols,
+            bounds=bounds,
+            method=method,
+            max_iterations=max_iterations,
+            constraints=constraints
+        )
+        return {
+            'success': True,
+            'optimalParams': result['optimal_params'],
+            'optimalReward': result['optimal_reward'],
+            'baselinePredictions': result['baseline_predictions'],
+            'optimalPredictions': result['optimal_predictions'],
+            'improvement': result['improvement'],
+            'iterations': result['iterations'],
+            'policyPath': None
+        }
+    # Sequential: run optimization for each period with context
+    path = []
+    last_result = None
+    for t in range(1, sequence_horizon + 1):
+        ctx = {'period': t, 'totalPeriods': sequence_horizon}
+        last_result = optimizer.optimize(
+            base_features=data['X_test'],
+            entity_ids=data['entity_test'],
+            policy_feature_names=policy_features,
+            feature_names=feature_cols,
+            target_names=target_cols,
+            bounds=bounds,
+            method=method,
+            max_iterations=max_iterations,
+            context=ctx,
+            constraints=constraints
+        )
+        path.append({'period': t, 'optimalParams': last_result['optimal_params']})
     return {
         'success': True,
-        'optimalParams': result['optimal_params'],
-        'optimalReward': result['optimal_reward'],
-        'baselinePredictions': result['baseline_predictions'],
-        'optimalPredictions': result['optimal_predictions'],
-        'improvement': result['improvement'],
-        'iterations': result['iterations']
+        'optimalParams': last_result['optimal_params'],
+        'optimalReward': last_result['optimal_reward'],
+        'baselinePredictions': last_result['baseline_predictions'],
+        'optimalPredictions': last_result['optimal_predictions'],
+        'improvement': last_result['improvement'],
+        'iterations': last_result['iterations'],
+        'policyPath': path,
+        'sequenceHorizon': sequence_horizon
     }
 
 
 def handle_predict(input_data: Dict) -> Dict:
-    """Handle prediction request."""
+    """Handle prediction request. Supports modelStates (ensemble) for mean and std."""
     model_state = input_data.get('modelState')
-    if not model_state:
+    model_states = input_data.get('modelStates')
+    if not model_state and not model_states:
         return {'success': False, 'error': 'No model state provided.'}
-    
-    # Recreate model
-    config = model_state['config']
+    state_to_use = model_states if model_states else model_state
+    model, models = _load_models_from_state(state_to_use)
+    config = (model_states[0] if model_states else model_state)['config']
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    
-    model = PanelTransformer.from_config(config)
-    state_dict = {}
-    for k, v in model_state['state_dict'].items():
-        state_dict[k] = torch.tensor(v)
-    model.load_state_dict(state_dict)
-    model.to(device)
-    model.eval()
-    
-    # Load data
     processor = PanelDataProcessor()
-    processor.load_normalization_params(model_state['data_params'])
-    
+    processor.load_normalization_params((model_states[0] if model_states else model_state)['data_params'])
     csv_data = input_data.get('data')
-    data_type = input_data.get('dataType', model_state['data_params'].get('data_type', 'panel'))
+    data_type = input_data.get('dataType', (model_states[0] if model_states else model_state)['data_params'].get('data_type', 'panel'))
     entity_col = input_data.get('entityCol')
     time_col = input_data.get('timeCol')
     feature_cols = input_data.get('featureCols', [])
@@ -377,16 +438,27 @@ def handle_predict(input_data: Dict) -> Dict:
         data_type=data_type
     )
     
-    # Predict
+    X = torch.tensor(data['X_test'], dtype=torch.float32).to(device)
+    entity_ids = torch.tensor(data['entity_test'], dtype=torch.long).to(device)
+    if models:
+        all_preds = []
+        with torch.no_grad():
+            for m in models:
+                pred, _ = m(X, entity_ids)
+                all_preds.append(pred.cpu().numpy())
+        predictions = np.mean(all_preds, axis=0)
+        predictions_std = np.std(all_preds, axis=0)
+        predictions_denorm = processor.denormalize_predictions(predictions)
+        return {
+            'success': True,
+            'predictions': predictions_denorm.tolist(),
+            'targetNames': target_cols,
+            'predictionStd': predictions_std.tolist()
+        }
     with torch.no_grad():
-        X = torch.tensor(data['X_test'], dtype=torch.float32).to(device)
-        entity_ids = torch.tensor(data['entity_test'], dtype=torch.long).to(device)
-        predictions, attention = model(X, entity_ids, return_attention=True)
+        predictions, _ = model(X, entity_ids, return_attention=True)
         predictions = predictions.cpu().numpy()
-    
-    # Denormalize predictions
     predictions_denorm = processor.denormalize_predictions(predictions)
-    
     return {
         'success': True,
         'predictions': predictions_denorm.tolist(),

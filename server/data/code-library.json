@@ -1,0 +1,236 @@
+{
+  "R": {
+    "regression": {
+      "name": "OLS Regression",
+      "description": "Linear regression with lm(), summary and optional robust SE",
+      "snippet": "model <- lm({{outcome}} ~ {{covariates}}, data = df)\nsummary(model)\n# Robust SE: library(lmtest); library(sandwich); coeftest(model, vcov = vcovHC(model, type = 'HC1'))"
+    },
+    "fe_regression": {
+      "name": "Fixed Effects (plm)",
+      "description": "Panel fixed effects with plm",
+      "snippet": "library(plm)\nmodel <- plm({{outcome}} ~ {{covariates}}, data = df, index = c('{{entity}}', '{{time}}'), model = 'within')\nsummary(model)"
+    },
+    "summary_stats": {
+      "name": "Summary Statistics",
+      "description": "Descriptive statistics and correlation",
+      "snippet": "summary(df)\n# Correlation matrix for selected numeric vars:\ncor(df[, c({{vars}})], use = 'complete.obs')"
+    },
+    "merge": {
+      "name": "Merge Data",
+      "description": "Merge two data frames by key",
+      "snippet": "merged <- merge(df1, df2, by = c('{{key}}'), all.x = TRUE)"
+    },
+    "iv_regression": {
+      "name": "IV / 2SLS",
+      "description": "Instrumental variables with AER::ivreg",
+      "snippet": "library(AER)\nmodel <- ivreg({{outcome}} ~ {{covariates}} | {{instruments}}, data = df)\nsummary(model)"
+    },
+    "did_twfe": {
+      "name": "Difference-in-Differences (Two-Way FE)",
+      "description": "DiD with treatment × post interaction, two-way fixed effects",
+      "snippet": "library(fixest)\n# df needs: outcome, treat (0/1), post (0/1), entity + time FEs\nmodel <- feols({{outcome}} ~ i(post, treat, ref = 0) | {{entity}} + {{time}}, data = df, cluster = '{{entity}}')\nsummary(model)\n# Or with lm + factor FEs:\n# model <- lm({{outcome}} ~ treat * post + factor({{entity}}) + factor({{time}}), data = df)"
+    },
+    "did_event_study": {
+      "name": "Event Study / Dynamic DiD",
+      "description": "Event study: relative period dummies, omit one period (e.g. -1)",
+      "snippet": "library(fixest)\n# rel_period: years relative to treatment (e.g. -2, -1, 0, 1, 2); omit -1\nmodel <- feols({{outcome}} ~ i(rel_period, ref = -1) | {{entity}} + {{time}}, data = df, cluster = '{{entity}}')\nsummary(model)\ncoefplot(model)"
+    },
+    "rd": {
+      "name": "Regression Discontinuity (Sharp RD)",
+      "description": "Sharp RD with local polynomial, MSE-optimal bandwidth",
+      "snippet": "library(rdrobust)\n# running: running variable; treat: 0/1 (e.g. running >= cutoff)\nrd <- rdrobust(y = df${{outcome}}, x = df${{running}}, c = 0, p = 1)\nsummary(rd)\n# With covariates:\n# rd <- rdrobust(y = df${{outcome}}, x = df${{running}}, covs = df[, c({{covariates}})], c = 0)"
+    },
+    "rd_fuzzy": {
+      "name": "Fuzzy RDD (IV)",
+      "description": "Fuzzy RDD: treatment receipt as function of running; use Z as instrument",
+      "snippet": "library(rdrobust)\n# First stage: treat ~ Z near cutoff; reduce to same bandwidth\n# Then IV: outcome ~ treat | Z (or use rdrobust with fuzzy option)\nrd_fuzzy <- rdrobust(y = df${{outcome}}, x = df${{running}}, fuzzy = df${{treatment}}, c = 0)\nsummary(rd_fuzzy)"
+    },
+    "synth_control": {
+      "name": "Synthetic Control",
+      "description": "Synthetic control for single treated unit; require Synth or gsynth",
+      "snippet": "library(gsynth)\n# outcome, treat (0/1), unit id, time id. One treated unit.\nout <- gsynth({{outcome}} ~ {{covariates}}, data = df, index = c('{{entity}}', '{{time}}'), force = 'two-way', CV = TRUE, r = 0)\nplot(out)"
+    },
+    "logit_probit": {
+      "name": "Logit / Probit",
+      "description": "Binary outcome: logit or probit with marginal effects",
+      "snippet": "model <- glm({{outcome}} ~ {{covariates}}, data = df, family = binomial(link = 'logit'))\nsummary(model)\n# Marginal effects at mean: library(margins); margins(model)"
+    },
+    "poisson_nb": {
+      "name": "Count: Poisson / Negative Binomial",
+      "description": "Count outcome: Poisson or NB to allow overdispersion",
+      "snippet": "library(MASS)\nmodel_pois <- glm({{outcome}} ~ {{covariates}}, data = df, family = poisson)\nmodel_nb <- glm.nb({{outcome}} ~ {{covariates}}, data = df)\nsummary(model_nb)\n# Compare: dispersion test or AIC"
+    },
+    "cluster_se": {
+      "name": "Cluster-Robust Standard Errors",
+      "description": "OLS with SEs clustered by group (e.g. state, firm)",
+      "snippet": "library(lmtest)\nlibrary(sandwich)\nmodel <- lm({{outcome}} ~ {{covariates}}, data = df)\ncoeftest(model, vcov = vcovCL(model, cluster = df${{cluster_var}}))"
+    },
+    "quantile_reg": {
+      "name": "Quantile Regression",
+      "description": "Quantile regression (e.g. median, 25th, 75th percentile)",
+      "snippet": "library(quantreg)\nmodel <- rq({{outcome}} ~ {{covariates}}, data = df, tau = 0.5)\nsummary(model, se = 'boot')\n# Multiple quantiles: rq(..., tau = c(0.25, 0.5, 0.75))"
+    },
+    "interaction_poly": {
+      "name": "Interactions & Polynomials",
+      "description": "Interactions and polynomial terms",
+      "snippet": "model <- lm({{outcome}} ~ {{covariates}} + I(x^2) + x1:x2, data = df)\n# Or: outcome ~ poly(x, 2) + x1 * x2\nsummary(model)"
+    },
+    "re_panel": {
+      "name": "Random Effects (Panel)",
+      "description": "Panel random effects with plm",
+      "snippet": "library(plm)\nmodel <- plm({{outcome}} ~ {{covariates}}, data = df, index = c('{{entity}}', '{{time}}'), model = 'random')\nsummary(model)"
+    },
+    "first_diff": {
+      "name": "First Difference",
+      "description": "First-difference estimator for panel",
+      "snippet": "library(plm)\nmodel <- plm({{outcome}} ~ {{covariates}}, data = df, index = c('{{entity}}', '{{time}}'), model = 'fd')\nsummary(model)"
+    },
+    "bootstrap_ci": {
+      "name": "Bootstrap Confidence Intervals",
+      "description": "Bootstrap SE and CI for a statistic (e.g. coefficient)",
+      "snippet": "library(boot)\nstat <- function(data, i) coef(lm({{outcome}} ~ {{covariates}}, data = data[i, ]))[2]\nboot_out <- boot(df, stat, R = 999)\nboot.ci(boot_out, type = 'perc')"
+    },
+    "psm_match": {
+      "name": "Propensity Score Matching",
+      "description": "Nearest-neighbor PSM (MatchIt); then compare outcomes",
+      "snippet": "library(MatchIt)\nm <- matchit(treat ~ {{covariates}}, data = df, method = 'nearest', estimand = 'ATT')\ndf_m <- match.data(m)\nmodel <- lm({{outcome}} ~ treat, data = df_m, weights = weights)\nsummary(model)"
+    },
+    "mediation": {
+      "name": "Mediation Analysis",
+      "description": "Baron-Kenny / mediation: X -> M -> Y",
+      "snippet": "library(mediation)\n# Step 1: M ~ X\nmed_fit <- lm({{mediator}} ~ {{treatment}}, data = df)\n# Step 2: Y ~ X + M\nout_fit <- lm({{outcome}} ~ {{treatment}} + {{mediator}}, data = df)\nmed_out <- mediate(med_fit, out_fit, treat = '{{treatment}}', mediator = '{{mediator}}', boot = TRUE, sims = 500)\nsummary(med_out)"
+    },
+    "multinom": {
+      "name": "Multinomial Logit",
+      "description": "Multinomial choice (e.g. 3+ categories)",
+      "snippet": "library(nnet)\nmodel <- multinom({{outcome}} ~ {{covariates}}, data = df)\nsummary(model)\n# Relative risk ratios: exp(coef(model))"
+    },
+    "tobit": {
+      "name": "Tobit (Censored)",
+      "description": "Censored regression (e.g. outcome censored at 0)",
+      "snippet": "library(AER)\nmodel <- tobit({{outcome}} ~ {{covariates}}, data = df, left = 0)\nsummary(model)"
+    },
+    "arima_ts": {
+      "name": "ARIMA / Time Series",
+      "description": "ARIMA(p,d,q) for univariate time series",
+      "snippet": "model <- arima(df${{outcome}}, order = c(1, 0, 1))\nsummary(model)\n# Forecast: predict(model, n.ahead = 12)"
+    }
+  },
+  "Stata": {
+    "regression": {
+      "name": "OLS Regression",
+      "description": "reg with robust standard errors",
+      "snippet": "reg {{outcome}} {{covariates}}, robust"
+    },
+    "fe_regression": {
+      "name": "Fixed Effects",
+      "description": "xtreg with entity fixed effects",
+      "snippet": "xtset {{entity}} {{time}}\nxtreg {{outcome}} {{covariates}}, fe robust"
+    },
+    "summary_stats": {
+      "name": "Summary & Correlate",
+      "description": "summarize and correlate",
+      "snippet": "summarize {{vars}}\ncorrelate {{vars}}"
+    },
+    "merge": {
+      "name": "Merge",
+      "description": "merge two datasets by key",
+      "snippet": "merge 1:1 {{key}} using \"filename.dta\""
+    },
+    "iv_regression": {
+      "name": "IV / 2SLS",
+      "description": "ivreg2 for instrumental variables",
+      "snippet": "ivreg2 {{outcome}} ({{endogenous}} = {{instruments}}) {{covariates}}, robust"
+    },
+    "did_twfe": {
+      "name": "Difference-in-Differences (Two-Way FE)",
+      "description": "DiD with treat × post, entity and time FEs",
+      "snippet": "reghdfe {{outcome}} c.post#i.treat, absorb({{entity}} {{time}}) vce(cluster {{entity}})\n* Or: xtreg {{outcome}} i.post#i.treat, fe robust cluster({{entity}})"
+    },
+    "did_event_study": {
+      "name": "Event Study / Dynamic DiD",
+      "description": "Event study with relative period dummies (omit -1)",
+      "snippet": "reghdfe {{outcome}} i.rel_period, absorb({{entity}} {{time}}) vce(cluster {{entity}})\n* Create rel_period = year - treatment_year; drop period -1 for reference"
+    },
+    "rd": {
+      "name": "Regression Discontinuity (Sharp RD)",
+      "description": "rdrobust for sharp RDD with optimal bandwidth",
+      "snippet": "rdrobust {{outcome}} {{running}}, c(0) p(1)\n* With covariates: rdrobust {{outcome}} {{running}}, c(0) covs({{covariates}})"
+    },
+    "rd_fuzzy": {
+      "name": "Fuzzy RDD",
+      "description": "Fuzzy RDD with rdrobust",
+      "snippet": "rdrobust {{outcome}} {{running}}, c(0) fuzzy({{treatment}})"
+    },
+    "synth_control": {
+      "name": "Synthetic Control",
+      "description": "synth for synthetic control (single treated unit)",
+      "snippet": "synth {{outcome}} {{covariates}}, trunit(1) trperiod(2005) unitnum({{entity}}) fig"
+    },
+    "logit_probit": {
+      "name": "Logit / Probit",
+      "description": "Binary outcome with marginal effects",
+      "snippet": "logit {{outcome}} {{covariates}}, robust\nmargins, dydx(*)"
+    },
+    "poisson_nb": {
+      "name": "Count: Poisson / NB",
+      "description": "Count outcome; nbreg for overdispersion",
+      "snippet": "nbreg {{outcome}} {{covariates}}, robust\n* Or: poisson {{outcome}} {{covariates}}, vce(robust)"
+    },
+    "cluster_se": {
+      "name": "Cluster-Robust SE",
+      "description": "Regress with cluster-robust SE",
+      "snippet": "reg {{outcome}} {{covariates}}, vce(cluster {{cluster_var}})"
+    },
+    "quantile_reg": {
+      "name": "Quantile Regression",
+      "description": "qreg for median (or other quantiles)",
+      "snippet": "qreg {{outcome}} {{covariates}}, quantile(0.5) vce(robust)"
+    },
+    "interaction_poly": {
+      "name": "Interactions & Polynomials",
+      "description": "c.x1#c.x2 for interaction; c.x#c.x for polynomial",
+      "snippet": "reg {{outcome}} {{covariates}} c.x1#c.x2 c.x#c.x"
+    },
+    "re_panel": {
+      "name": "Random Effects (Panel)",
+      "description": "xtreg with random effects",
+      "snippet": "xtset {{entity}} {{time}}\nxtreg {{outcome}} {{covariates}}, re robust"
+    },
+    "first_diff": {
+      "name": "First Difference",
+      "description": "First-difference estimator",
+      "snippet": "xtset {{entity}} {{time}}\nreg D.({{outcome}} {{covariates}}), robust"
+    },
+    "bootstrap_ci": {
+      "name": "Bootstrap",
+      "description": "Bootstrap SE for regression",
+      "snippet": "bootstrap, reps(500) seed(42): reg {{outcome}} {{covariates}}"
+    },
+    "psm_match": {
+      "name": "Propensity Score Matching",
+      "description": "psmatch2 for nearest-neighbor PSM",
+      "snippet": "psmatch2 treat {{covariates}}, outcome({{outcome}}) neighbor(1) common\n* Then: reg {{outcome}} treat [iweight=_weight], robust"
+    },
+    "mediation": {
+      "name": "Mediation (sgmediation)",
+      "description": "Mediation: X -> M -> Y (install sgmediation if needed)",
+      "snippet": "sgmediation {{outcome}}, iv({{treatment}}) mv({{mediator}}) cv({{covariates}})"
+    },
+    "multinom": {
+      "name": "Multinomial Logit",
+      "description": "mlogit for 3+ categories",
+      "snippet": "mlogit {{outcome}} {{covariates}}, baseoutcome(0) robust"
+    },
+    "tobit": {
+      "name": "Tobit (Censored)",
+      "description": "tobit for censored outcome",
+      "snippet": "tobit {{outcome}} {{covariates}}, ll(0)"
+    },
+    "arima_ts": {
+      "name": "ARIMA",
+      "description": "arima for time series",
+      "snippet": "arima {{outcome}}, ar(1) ma(1)"
+    }
+  }
+}

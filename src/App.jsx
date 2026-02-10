@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard'
 import ProfessionDashboard from './pages/ProfessionDashboard'
 import PolicyAnalyst from './pages/PolicyAnalyst'
 import PolicyMemoGenerator from './pages/PolicyMemoGenerator'
+import MyDocuments from './pages/MyDocuments'
 import PaperDeconstructor from './pages/PaperDeconstructor'
 import EmpiricalCopilot from './pages/EmpiricalCopilot'
 import InterviewTrainer from './pages/InterviewTrainer'
@@ -32,7 +33,11 @@ import ResearchDesignAdvisor from './pages/ResearchDesignAdvisor'
 import DesignChecker from './pages/DesignChecker'
 import RobustnessGenerator from './pages/RobustnessGenerator'
 import NLAnalyst from './pages/NLAnalyst'
-import PolicyDLAgent from './pages/PolicyDLAgent'
+import PaperReplication from './pages/PaperReplication'
+import NLCodeRunner from './pages/NLCodeRunner'
+import CodeSnippetLibrary from './pages/CodeSnippetLibrary'
+import GameTheoryLab from './pages/GameTheoryLab'
+import MicroeconomicsLab from './pages/MicroeconomicsLab'
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -100,6 +105,8 @@ function App() {
           path="/literature-helper"
           element={isAuthenticated ? <LiteratureHelper /> : <Navigate to="/login" />}
         />
+        <Route path="/rag" element={<Navigate to="/documents" replace />} />
+        <Route path="/documents" element={isAuthenticated ? <MyDocuments /> : <Navigate to="/login" />} />
         <Route
           path="/survey-checker"
           element={isAuthenticated ? <SurveyChecker /> : <Navigate to="/login" />}
@@ -113,6 +120,22 @@ function App() {
           element={isAuthenticated ? <DesignChecker /> : <Navigate to="/login" />}
         />
         <Route
+          path="/nl-code-runner"
+          element={isAuthenticated ? <NLCodeRunner /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/code-snippet-library"
+          element={isAuthenticated ? <CodeSnippetLibrary /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/game-theory-lab"
+          element={isAuthenticated ? <GameTheoryLab /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/microeconomics-lab"
+          element={isAuthenticated ? <MicroeconomicsLab /> : <Navigate to="/login" />}
+        />
+        <Route
           path="/robustness-generator"
           element={isAuthenticated ? <RobustnessGenerator /> : <Navigate to="/login" />}
         />
@@ -122,7 +145,7 @@ function App() {
         />
         <Route
           path="/policy-dl-agent"
-          element={isAuthenticated ? <PolicyDLAgent /> : <Navigate to="/login" />}
+          element={<Navigate to="/profession-dashboard" replace />}
         />
         <Route
           path="/policy-memo"
@@ -148,6 +171,10 @@ function App() {
         <Route
           path="/outside-links"
           element={(isAuthenticated || isGuest) ? <OutsideLinks /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/paper-replication"
+          element={(isAuthenticated || isGuest) ? <PaperReplication /> : <Navigate to="/login" />}
         />
         <Route
           path="/find-professors"

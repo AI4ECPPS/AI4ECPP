@@ -85,6 +85,15 @@ def compute_reward(predictions, actual, context):
   // Optimization settings
   const [optimizationMethod, setOptimizationMethod] = useState('differential_evolution')
   const [maxIterations, setMaxIterations] = useState(100)
+  const [useEnsemble, setUseEnsemble] = useState(false)
+  const [sequenceHorizon, setSequenceHorizon] = useState(1)
+  const [constraints, setConstraints] = useState([]) // [{ variable, type: 'max'|'min', value }]
+  
+  // Natural language goal and AI explanation
+  const [nlGoal, setNlGoal] = useState('')
+  const [explanation, setExplanation] = useState('')
+  const [loadingNlReward, setLoadingNlReward] = useState(false)
+  const [loadingExplain, setLoadingExplain] = useState(false)
   
   // Scenario analysis
   const [scenarios, setScenarios] = useState([
@@ -95,6 +104,7 @@ def compute_reward(predictions, actual, context):
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [modelState, setModelState] = useState(null)
+  const [modelStates, setModelStates] = useState(null) // when useEnsemble
   const [trainingResult, setTrainingResult] = useState(null)
   const [optimizationResult, setOptimizationResult] = useState(null)
   const [scenarioResult, setScenarioResult] = useState(null)
@@ -241,6 +251,7 @@ def compute_reward(predictions, actual, context):
   const resetResults = () => {
     setTrainingResult(null)
     setOptimizationResult(null)
+    setExplanation('')
     setScenarioResult(null)
   }
 
@@ -314,14 +325,15 @@ def compute_reward(predictions, actual, context):
         featureCols,
         targetCols,
         ...modelParams,
-        // For cross-sectional data, set lookback and predHorizon to 1
         lookback: dataType === 'panel' ? modelParams.lookback : 1,
-        predHorizon: dataType === 'panel' ? modelParams.predHorizon : 1
+        predHorizon: dataType === 'panel' ? modelParams.predHorizon : 1,
+        useEnsemble
       })
 
       if (response.data.success) {
         setTrainingResult(response.data)
-        setModelState(response.data.modelState)
+        setModelState(response.data.modelState ?? null)
+        setModelStates(response.data.modelStates ?? null)
       } else {
         setError(response.data.error || 'Training failed')
       }
@@ -338,9 +350,72 @@ def compute_reward(predictions, actual, context):
     }
   }
 
+  // Generate reward from natural language goal
+  const handleNlToReward = async () => {
+    if (!nlGoal.trim()) {
+      setError('Please enter a policy goal in natural language')
+      return
+    }
+    setLoadingNlReward(true)
+    setError('')
+    try {
+      const response = await api.post('/policy-dl-agent/nl-to-reward', {
+        goal: nlGoal.trim(),
+        targetVars: targetCols,
+        policyVars: policyFeatures
+      })
+      if (response.data.success && response.data.rewardCode) {
+        setRewardCode(response.data.rewardCode)
+      } else {
+        setError(response.data.message || 'Failed to generate reward')
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || 'Failed to generate reward')
+    } finally {
+      setLoadingNlReward(false)
+    }
+  }
+
+  // Explain optimization results with AI
+  const handleExplain = async () => {
+    if (!optimizationResult) {
+      setError('Run optimization first to get an explanation')
+      return
+    }
+    setLoadingExplain(true)
+    setError('')
+    try {
+      const response = await api.post('/policy-dl-agent/explain', {
+        optimalPolicy: optimizationResult.optimalParams || {},
+        optimalPredictions: optimizationResult.optimalPredictions || {},
+        baselinePredictions: optimizationResult.baselinePredictions,
+        featureImportance: trainingResult?.featureImportance || {},
+        targetVars: targetCols,
+        policyVars: policyFeatures
+      })
+      if (response.data.success) {
+        setExplanation(response.data.explanation)
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || 'Failed to generate explanation')
+    } finally {
+      setLoadingExplain(false)
+    }
+  }
+
+  const addConstraint = () => {
+    setConstraints(prev => [...prev, { variable: targetCols[0] || '', type: 'max', value: '' }])
+  }
+  const updateConstraint = (index, field, value) => {
+    setConstraints(prev => prev.map((c, i) => i === index ? { ...c, [field]: value } : c))
+  }
+  const removeConstraint = (index) => {
+    setConstraints(prev => prev.filter((_, i) => i !== index))
+  }
+
   // Handle optimization
   const handleOptimize = async () => {
-    if (!modelState) {
+    if (!modelState && !modelStates) {
       setError('Please train a model first')
       return
     }
@@ -358,8 +433,9 @@ def compute_reward(predictions, actual, context):
     setOptimizationResult(null)
 
     try {
-      const response = await api.post('/policy-dl-agent/optimize', {
-        modelState,
+      const payload = {
+        modelState: modelState || undefined,
+        modelStates: modelStates || undefined,
         rewardCode,
         data: rawData,
         dataType,
@@ -370,8 +446,15 @@ def compute_reward(predictions, actual, context):
         policyFeatures,
         bounds: policyBounds,
         optimizationMethod,
-        maxIterations
-      })
+        maxIterations,
+        constraints: constraints.filter(c => c.variable && c.value !== '').map(c => ({
+          variable: c.variable,
+          type: c.type,
+          value: parseFloat(c.value)
+        })),
+        sequenceHorizon: Math.max(1, parseInt(sequenceHorizon, 10) || 1)
+      }
+      const response = await api.post('/policy-dl-agent/optimize', payload)
 
       if (response.data.success) {
         setOptimizationResult(response.data)
@@ -388,7 +471,7 @@ def compute_reward(predictions, actual, context):
 
   // Handle scenario analysis
   const handleScenarioAnalysis = async () => {
-    if (!modelState) {
+    if (!modelState && !modelStates) {
       setError('Please train a model first')
       return
     }
@@ -416,7 +499,7 @@ def compute_reward(predictions, actual, context):
       }
 
       const response = await api.post('/policy-dl-agent/scenario', {
-        modelState,
+        modelState: modelState || (modelStates && modelStates[0]) || null,
         rewardCode,
         data: rawData,
         dataType,
@@ -481,6 +564,7 @@ def compute_reward(predictions, actual, context):
     setPolicyFeatures([])
     setPolicyBounds({})
     setModelState(null)
+    setModelStates(null)
     resetResults()
     setError('')
     if (fileInputRef.current) {
@@ -859,6 +943,54 @@ model_params = {
             </table>
           </div>
         </div>
+
+        {/* Explain results (AI) */}
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={handleExplain}
+            disabled={loadingExplain}
+            className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 text-sm"
+          >
+            {loadingExplain ? 'Generating...' : 'Explain results'}
+          </button>
+          {explanation && (
+            <div className="mt-3 p-4 bg-violet-50 border border-violet-200 rounded-lg text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">
+              {explanation}
+            </div>
+          )}
+        </div>
+
+        {/* Policy path (sequential) */}
+        {optimizationResult.policyPath && optimizationResult.policyPath.length > 0 && (
+          <div className="mt-6 bg-white rounded-lg border p-4">
+            <h4 className="font-medium text-gray-800 mb-3">Policy path (by period)</h4>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-left py-2 px-3">Period</th>
+                    {policyFeatures.map(pf => (
+                      <th key={pf} className="text-right py-2 px-3">{pf}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {optimizationResult.policyPath.map((row, i) => (
+                    <tr key={i} className="border-b">
+                      <td className="py-2 px-3 font-medium">{row.period}</td>
+                      {policyFeatures.map(pf => (
+                        <td key={pf} className="text-right py-2 px-3">
+                          {(row.optimalParams && row.optimalParams[pf] != null) ? Number(row.optimalParams[pf]).toFixed(4) : '—'}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -998,7 +1130,9 @@ model_params = {
             {columns.length > 0 && (
               <div className="bg-white rounded-lg shadow p-6">
                 <h3 className="text-lg font-bold text-gray-800 mb-4">3. Configure Variables</h3>
-                
+                <p className="text-sm text-gray-500 mb-4">
+                  <strong>Policy framing:</strong> Outcomes = target variables you want to improve. Policy levers = inputs you can set (select in step 4 when optimizing). Other features = controls the model uses for counterfactual prediction.
+                </p>
                 <div className="space-y-4">
                   {/* Panel Data: Entity and Time Columns */}
                   {dataType === 'panel' && (
@@ -1080,10 +1214,10 @@ model_params = {
                     </div>
                   </div>
 
-                  {/* Target Columns */}
+                  {/* Target Columns (Outcomes) */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Target Columns (Variables to Predict)
+                      Outcomes (Target Columns to Predict)
                     </label>
                     <div className="flex flex-wrap gap-2">
                       {columns.filter(c => c !== entityCol && c !== timeCol).map(col => (
@@ -1174,6 +1308,16 @@ model_params = {
                     </div>
                   </div>
                 )}
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useEnsemble}
+                      onChange={(e) => setUseEnsemble(e.target.checked)}
+                    />
+                    Use ensemble (3 models) for uncertainty — predictions and optimization will use mean over models; training takes ~3× longer.
+                  </label>
+                </div>
               </div>
             )}
 
@@ -1182,10 +1326,31 @@ model_params = {
               <div className="bg-white rounded-lg shadow p-6">
                 <h3 className="text-lg font-bold text-gray-800 mb-4">3. Reward Function</h3>
                 
-                {/* Policy Features Selection */}
+                {/* Natural language goal */}
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Policy Parameters (Features to Optimize)
+                    Policy goal in natural language (optional)
+                  </label>
+                  <textarea
+                    value={nlGoal}
+                    onChange={(e) => setNlGoal(e.target.value)}
+                    placeholder="e.g. Maximize GDP growth while keeping unemployment below 5%"
+                    className="w-full h-20 px-3 py-2 text-sm border rounded-lg mb-2"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleNlToReward}
+                    disabled={loadingNlReward || !nlGoal.trim()}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm"
+                  >
+                    {loadingNlReward ? 'Generating...' : 'Generate reward from goal'}
+                  </button>
+                </div>
+
+                {/* Policy levers (features to optimize) */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Policy levers (features to optimize)
                   </label>
                   <div className="flex flex-wrap gap-2">
                     {featureCols.map(col => (
@@ -1264,6 +1429,57 @@ model_params = {
                     className="w-full h-64 px-3 py-2 text-sm font-mono bg-gray-900 text-green-400 rounded-lg"
                     spellCheck="false"
                   />
+                </div>
+
+                {/* Constraints (e.g. unemployment ≤ 5) */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Constraints on outcomes</label>
+                  {constraints.map((c, i) => (
+                    <div key={i} className="flex items-center gap-2 mb-2">
+                      <select
+                        value={c.variable}
+                        onChange={(e) => updateConstraint(i, 'variable', e.target.value)}
+                        className="px-2 py-1 text-sm border rounded"
+                      >
+                        <option value="">Select variable</option>
+                        {targetCols.map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={c.type}
+                        onChange={(e) => updateConstraint(i, 'type', e.target.value)}
+                        className="px-2 py-1 text-sm border rounded"
+                      >
+                        <option value="max">≤</option>
+                        <option value="min">≥</option>
+                      </select>
+                      <input
+                        type="number"
+                        step="any"
+                        placeholder="Value"
+                        value={c.value}
+                        onChange={(e) => updateConstraint(i, 'value', e.target.value)}
+                        className="w-24 px-2 py-1 text-sm border rounded"
+                      />
+                      <button type="button" onClick={() => removeConstraint(i)} className="text-red-600 text-sm">Remove</button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={addConstraint} className="text-sm text-indigo-600 hover:text-indigo-700">+ Add constraint</button>
+                </div>
+
+                {/* Sequential policy path */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Policy path horizon (periods)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={sequenceHorizon}
+                    onChange={(e) => setSequenceHorizon(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    className="w-24 px-2 py-1.5 text-sm border rounded-lg"
+                  />
+                  <span className="ml-2 text-xs text-gray-500">1 = one-shot; &gt;1 = sequential path</span>
                 </div>
 
                 {/* Optimization Settings */}
@@ -1351,7 +1567,7 @@ model_params = {
               <div className="flex gap-3">
                 <button
                   onClick={mode === 'train' ? handleTrain : mode === 'optimize' ? handleOptimize : handleScenarioAnalysis}
-                  disabled={loading || !dataFile}
+                  disabled={loading || !dataFile || (mode === 'optimize' && !modelState && !modelStates) || (mode === 'scenario' && !modelState && !modelStates)}
                   className="flex-1 px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold disabled:opacity-50 hover:bg-indigo-700 transition"
                 >
                   {loading ? (

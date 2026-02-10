@@ -59,6 +59,8 @@
 
 未设置 `DATABASE_URL` 时，用户数据仍使用内存存储，重启后会丢失。
 
+**RAG 知识库**：使用同一 PostgreSQL 数据库。需确保数据库支持 **pgvector** 扩展（Neon、Supabase 等均支持）。首次启动时会自动执行 `CREATE EXTENSION vector` 并创建 `rag_documents`、`rag_chunks` 表。
+
 ## 项目结构说明
 
 - **Dockerfile**：构建 Node.js + Python 环境，包含前端构建与后端服务

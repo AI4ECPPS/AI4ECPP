@@ -36,15 +36,15 @@ router.post('/chatgpt',
   checkOpenAIKey,
   validateInput({ 
     checkProfanity: true, 
-    filterProfanity: true, // 过滤脏话而不是拒绝
-    checkSQLInjection: false, // ChatGPT prompt 不需要检查 SQL 注入，因为不会直接进入数据库
-    checkXSS: false, // ChatGPT prompt 不需要检查 XSS，因为会被发送到 OpenAI API
-    maxLength: 50000, // ChatGPT prompt 可以比较长
-    allowedFields: ['prompt', 'systemMessage']
+    filterProfanity: true,
+    checkSQLInjection: false,
+    checkXSS: false,
+    maxLength: 50000,
+    allowedFields: ['prompt', 'systemMessage', 'temperature']
   }),
   async (req, res) => {
   try {
-    const { prompt, systemMessage } = req.body
+    const { prompt, systemMessage, temperature: reqTemp } = req.body
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
       return res.status(400).json({ error: 'Prompt is required' })
@@ -69,13 +69,13 @@ router.post('/chatgpt',
       content: prompt
     })
 
-    // Call OpenAI API
+    const temperature = reqTemp != null ? Math.min(2, Math.max(0, Number(reqTemp))) : 0.7
     const client = getOpenAIClient()
     const completion = await client.chat.completions.create({
-      model: 'gpt-4o', // Latest and most capable model - faster, cheaper, and more powerful than gpt-4-turbo-preview
+      model: 'gpt-4o',
       messages: messages,
-      temperature: 0.7,
-      max_tokens: 4000 // Increased token limit for better responses
+      temperature,
+      max_tokens: 4000
     })
 
     const response = completion.choices[0].message.content
@@ -108,6 +108,58 @@ router.post('/chatgpt',
     })
   }
 })
+
+// Streaming ChatGPT endpoint for Proof Writer (and other streaming use cases)
+router.post('/chatgpt/stream',
+  checkOpenAIKey,
+  validateInput({
+    checkProfanity: true,
+    filterProfanity: true,
+    checkSQLInjection: false,
+    checkXSS: false,
+    maxLength: 50000,
+    allowedFields: ['prompt', 'systemMessage', 'temperature']
+  }),
+  async (req, res) => {
+    try {
+      const { prompt, systemMessage, temperature: reqTemp } = req.body
+      if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+        return res.status(400).json({ error: 'Prompt is required' })
+      }
+      const messages = []
+      if (systemMessage) messages.push({ role: 'system', content: systemMessage })
+      messages.push({ role: 'user', content: prompt })
+      const temperature = reqTemp != null ? Math.min(2, Math.max(0, Number(reqTemp))) : 0.7
+      const client = getOpenAIClient()
+      const stream = await client.chat.completions.create({
+        model: 'gpt-4o',
+        messages,
+        temperature,
+        max_tokens: 4000,
+        stream: true
+      })
+      res.setHeader('Content-Type', 'text/event-stream')
+      res.setHeader('Cache-Control', 'no-cache')
+      res.setHeader('Connection', 'keep-alive')
+      res.setHeader('X-Accel-Buffering', 'no')
+      res.flushHeaders && res.flushHeaders()
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content
+        if (content) res.write(`data: ${JSON.stringify({ content })}\n\n`)
+      }
+      res.write('data: [DONE]\n\n')
+      res.end()
+    } catch (error) {
+      console.error('OpenAI stream error:', error)
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'Failed to stream response',
+          message: error.message
+        })
+      }
+    }
+  }
+)
 
 // Picture to LATEX API endpoint
 router.post('/pic-to-latex',

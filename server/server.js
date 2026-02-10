@@ -8,6 +8,8 @@ import authRoutes from './routes/auth.js'
 import chatgptRoutes from './routes/chatgpt.js'
 import policyAnalystRoutes from './routes/policy-analyst.js'
 import policyDLAgentRoutes from './routes/policy-dl-agent.js'
+import ragRoutes from './routes/rag.js'
+import nlCodeRunnerRoutes from './routes/nl-code-runner.js'
 
 dotenv.config()
 
@@ -30,6 +32,8 @@ app.use('/api/auth', authRoutes)
 app.use('/api', chatgptRoutes)
 app.use('/api/policy-analyst', policyAnalystRoutes)
 app.use('/api/policy-dl-agent', policyDLAgentRoutes)
+app.use('/api/rag', ragRoutes)
+app.use('/api/nl-code-runner', nlCodeRunnerRoutes)
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -260,7 +260,6 @@ CRITICAL: When searching for professors:
               type="text"
               value={searchQuery}
               onChange={handleSearchQueryChange}
-              onChange={handleSearchQueryChange}
               onKeyPress={handleKeyPress}
               maxLength={500}
               placeholder={

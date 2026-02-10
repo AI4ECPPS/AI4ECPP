@@ -2,8 +2,17 @@ import express from 'express'
 import { spawn } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import OpenAI from 'openai'
 
 const router = express.Router()
+
+const getOpenAIClient = () => {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey || apiKey === 'your-openai-api-key-here') {
+    throw new Error('OPENAI_API_KEY is not configured')
+  }
+  return new OpenAI({ apiKey })
+}
 
 // Get __dirname equivalent in ES modules
 const __filename = fileURLToPath(import.meta.url)
@@ -156,6 +165,7 @@ router.post('/train', async (req, res) => {
     console.log(`[Policy DL Agent] Starting training (${dataType}) with ${featureCols.length} features, ${targetCols.length} targets`)
     console.log(`[Policy DL Agent] Model config: d_model=${dModel}, heads=${numHeads}, layers=${numLayers}`)
     
+    const useEnsemble = req.body.useEnsemble === true
     const inputData = {
       action: 'train',
       data,
@@ -173,7 +183,8 @@ router.post('/train', async (req, res) => {
       batchSize,
       epochs,
       lookback: dataType === 'panel' ? lookback : 1,
-      predHorizon: dataType === 'panel' ? predHorizon : 1
+      predHorizon: dataType === 'panel' ? predHorizon : 1,
+      useEnsemble
     }
     
     // Training may take a while - 10 minute timeout
@@ -205,6 +216,7 @@ router.post('/optimize', async (req, res) => {
   try {
     const {
       modelState,
+      modelStates,
       rewardCode,
       data,
       dataType = 'panel',
@@ -215,10 +227,12 @@ router.post('/optimize', async (req, res) => {
       policyFeatures,
       bounds,
       optimizationMethod = 'differential_evolution',
-      maxIterations = 100
+      maxIterations = 100,
+      constraints = [],
+      sequenceHorizon = 1
     } = req.body
     
-    if (!modelState) {
+    if (!modelState && !modelStates) {
       return res.status(400).json({
         success: false,
         error: 'No model',
@@ -246,7 +260,8 @@ router.post('/optimize', async (req, res) => {
     
     const inputData = {
       action: 'optimize',
-      modelState,
+      modelState: modelState || null,
+      modelStates: modelStates || null,
       rewardCode,
       data,
       dataType,
@@ -257,7 +272,9 @@ router.post('/optimize', async (req, res) => {
       policyFeatures,
       bounds,
       optimizationMethod,
-      maxIterations
+      maxIterations,
+      constraints,
+      sequenceHorizon: Math.max(1, parseInt(sequenceHorizon, 10) || 1)
     }
     
     // Optimization timeout: 5 minutes
@@ -388,6 +405,111 @@ router.post('/scenario', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Scenario analysis failed',
+      message: error.message
+    })
+  }
+})
+
+/**
+ * POST /api/policy-dl-agent/nl-to-reward
+ * Convert natural language policy goal into reward function code (and optional constraints)
+ */
+router.post('/nl-to-reward', async (req, res) => {
+  try {
+    const { goal, targetVars = [], policyVars = [] } = req.body
+    if (!goal || typeof goal !== 'string' || !goal.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Goal is required',
+        message: 'Please provide a natural language description of your policy goal.'
+      })
+    }
+    const client = getOpenAIClient()
+    const systemMessage = `You are an expert in policy optimization and Python. Given a user's policy goal in natural language, generate a Python function that computes a reward.
+
+Rules:
+1. Output ONLY valid Python code that defines a function: compute_reward(predictions, actual, context).
+2. predictions: dict mapping target variable names (e.g. from targetVars) to predicted float values.
+3. actual: dict of actual values (may be empty during optimization).
+4. context: dict that may contain 'period', 'totalPeriods', 'constraints'.
+5. Return a single float: higher is better. Combine multiple objectives into one number (e.g. weighted sum).
+6. If the user mentions constraints (e.g. "unemployment must not exceed 5%"), add a penalty when violated: e.g. if predictions.get('unemployment', 0) > 5: reward -= 1000 * (predictions['unemployment'] - 5).
+7. Do not use imports except: import numpy as np (optional). Use only built-ins and numpy.
+8. Do not include markdown or explanation, only the code.`
+    const prompt = `Target outcome variables (use these keys from predictions): ${targetVars.join(', ') || 'any'}. Policy levers (for context): ${policyVars.join(', ') || 'any'}.
+
+User goal: ${goal.trim()}
+
+Generate the compute_reward function code only (no markdown, no \`\`\`).`
+    const completion = await client.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemMessage },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.3,
+      max_tokens: 1500
+    })
+    let code = (completion.choices[0].message.content || '').trim()
+    code = code.replace(/^```(?:python)?\s*/i, '').replace(/\s*```$/i, '').trim()
+    if (!code.includes('def compute_reward')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid response',
+        message: 'Generated code must define compute_reward. Try rephrasing your goal.'
+      })
+    }
+    res.json({
+      success: true,
+      rewardCode: code,
+      constraints: []
+    })
+  } catch (error) {
+    console.error('[Policy DL Agent] nl-to-reward error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate reward',
+      message: error.message
+    })
+  }
+})
+
+/**
+ * POST /api/policy-dl-agent/explain
+ * Generate natural language explanation of optimization results
+ */
+router.post('/explain', async (req, res) => {
+  try {
+    const { optimalPolicy = {}, optimalPredictions = {}, baselinePredictions = {}, featureImportance = {}, targetVars = [], policyVars = [] } = req.body
+    const client = getOpenAIClient()
+    const prompt = `You are a policy analyst. In 2-4 short paragraphs, explain these optimization results in plain language for a policymaker.
+
+Optimal policy (levers to set): ${JSON.stringify(optimalPolicy)}
+Policy lever names: ${policyVars.join(', ')}
+
+Predicted outcomes under optimal policy: ${JSON.stringify(optimalPredictions)}
+Baseline (current) predicted outcomes: ${JSON.stringify(baselinePredictions)}
+Outcome variable names: ${targetVars.join(', ')}
+
+Feature importance (which inputs the model relied on most): ${JSON.stringify(featureImportance)}
+
+Write: (1) what the recommended policy is, (2) how predicted outcomes change vs baseline, (3) what drives the model's predictions. Be concise and avoid jargon.`
+    const completion = await client.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.5,
+      max_tokens: 800
+    })
+    const explanation = (completion.choices[0].message.content || '').trim()
+    res.json({
+      success: true,
+      explanation
+    })
+  } catch (error) {
+    console.error('[Policy DL Agent] explain error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate explanation',
       message: error.message
     })
   }

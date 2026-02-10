@@ -7,7 +7,7 @@ import SignUp from './SignUp'
 function ProfessionDashboard({ isAuthenticated, setIsAuthenticated, isGuest = false }) {
   const navigate = useNavigate()
   const [showAuthModal, setShowAuthModal] = useState(false)
-  const [authMode, setAuthMode] = useState('login') // 'login' or 'signup'
+  const [authMode, setAuthMode] = useState('login')
   const [userEmail, setUserEmail] = useState('')
   const [showLoginPrompt, setShowLoginPrompt] = useState(false)
 
@@ -56,6 +56,17 @@ function ProfessionDashboard({ isAuthenticated, setIsAuthenticated, isGuest = fa
       clearInterval(interval)
     }
   }, [isAuthenticated, setIsAuthenticated])
+
+  const handleRagButtonClick = () => {
+    if (isGuest || !isAuthenticated) {
+      setAuthMode('login')
+      setShowAuthModal(true)
+      setShowLoginPrompt(true)
+      setTimeout(() => setShowLoginPrompt(false), 3000)
+    } else {
+      navigate('/documents')
+    }
+  }
 
   const handleLogout = () => {
     localStorage.removeItem('authToken')
@@ -144,11 +155,33 @@ function ProfessionDashboard({ isAuthenticated, setIsAuthenticated, isGuest = fa
       color: 'from-rose-500 to-indigo-600',
     },
     {
+      id: 'nl-code-runner',
+      title: 'Natural Language R / Stata Code',
+      description: 'Describe your analysis in plain language; get R or Stata code. Upload CSVs, select variables, use pre-built or your own code snippets, copy code to clipboard.',
+      icon: '⌨️',
+      color: 'from-amber-500 to-orange-600',
+    },
+    {
+      id: 'game-theory-lab',
+      title: 'Game Theory Lab',
+      description: 'Experiment with 2×2 games: enter payoffs, find pure-strategy Nash equilibria, and get R code to reproduce the analysis.',
+      icon: '🎲',
+      color: 'from-lime-500 to-green-600',
+    },
+    {
+      id: 'microeconomics-lab',
+      title: 'Microeconomics Lab',
+      description: 'Linear demand and supply: set parameters, see equilibrium price and quantity, and get R code with a plot.',
+      icon: '📈',
+      color: 'from-sky-500 to-blue-600',
+    },
+    {
       id: 'policy-dl-agent',
       title: 'Policy Deep Learning Agent',
       description: 'Train a Transformer model on panel data to predict socio-economic outcomes. Define custom reward functions and optimize policy parameters.',
       icon: '🤖',
       color: 'from-indigo-500 to-purple-600',
+      disabled: true, // Under maintenance
     },
   ]
 
@@ -241,20 +274,61 @@ function ProfessionDashboard({ isAuthenticated, setIsAuthenticated, isGuest = fa
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="mb-8">
+          <div className="flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={handleRagButtonClick}
+              className={`px-6 py-3 rounded-xl font-semibold transition flex items-center gap-2 ${
+                isGuest || !isAuthenticated
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+              }`}
+              title={isGuest || !isAuthenticated ? 'Log in to manage your documents' : 'Add and manage documents for RAG'}
+            >
+              <span>📎</span>
+              Upload Documents for your RAG
+            </button>
+            <button
+              type="button"
+              onClick={() => isAuthenticated && navigate('/code-snippet-library')}
+              className={`px-6 py-3 rounded-xl font-semibold transition flex items-center gap-2 ${
+                isGuest || !isAuthenticated
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-sky-500 text-white hover:bg-sky-600'
+              }`}
+              title={isGuest || !isAuthenticated ? 'Log in to manage your code snippets' : 'Browse and upload R/Stata code snippets'}
+            >
+              <span>📚</span>
+              Code Snippet Library
+            </button>
+          </div>
+          {showLoginPrompt && (isGuest || !isAuthenticated) && (
+            <p className="mt-4 text-sm text-amber-600">Please log in to add and manage your documents.</p>
+          )}
+        </div>
+
+        <div className="mb-8">
           <h2 className="text-3xl font-bold text-gray-900 mb-2">Professional Research Tools</h2>
-          <p className="text-gray-600">Advanced AI-powered tools for economists and policy researchers</p>
+          <p className="text-gray-600">Advanced AI-powered tools for economists and policy researchers. Enable &quot;Use my knowledge base&quot; in supported tools to use your uploaded documents.</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {tools.map((tool) => (
             <div
               key={tool.id}
-              onClick={() => handleToolClick(tool.id)}
-              className={`bg-gradient-to-br ${tool.color} rounded-xl p-6 text-white cursor-pointer transform transition hover:scale-105 hover:shadow-xl`}
+              onClick={() => tool.disabled ? null : handleToolClick(tool.id)}
+              className={`rounded-xl p-6 text-white transition ${
+                tool.disabled
+                  ? 'bg-gray-300 cursor-not-allowed opacity-75'
+                  : `bg-gradient-to-br ${tool.color} cursor-pointer transform hover:scale-105 hover:shadow-xl`
+              }`}
             >
               <div className="text-4xl mb-4">{tool.icon}</div>
               <h3 className="text-xl font-bold mb-2">{tool.title}</h3>
               <p className="text-white/90 text-sm">{tool.description}</p>
+              {tool.disabled && (
+                <p className="mt-3 text-sm font-medium text-gray-600">Temporarily unavailable</p>
+              )}
             </div>
           ))}
         </div>

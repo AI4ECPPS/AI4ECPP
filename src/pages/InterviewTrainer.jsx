@@ -1,179 +1,220 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { callChatGPT } from '../utils/api'
 import ReactMarkdown from 'react-markdown'
 import Logo from '../components/Logo'
 import { validateAndSanitizeText, limitInputLength } from '../utils/security'
 
+const STORAGE_KEY = 'interviewTrainerSessions'
+const TIMER_SECONDS = 120 // 2 min per question
+
+// Parse STAR (Situation, Task, Action, Result) from answer text
+function parseSTAR(text) {
+  if (!text || typeof text !== 'string') return null
+  const s = text.replace(/\r\n/g, '\n')
+  const situation = s.match(/(?:Situation|S)[:\s]*([^\n]+(?:\n(?!Task|Action|Result|T:|A:|R:)[^\n]+)*)/i)?.[1]?.trim()
+  const task = s.match(/(?:Task|T)[:\s]*([^\n]+(?:\n(?!Situation|Action|Result|S:|A:|R:)[^\n]+)*)/i)?.[1]?.trim()
+  const action = s.match(/(?:Action|A)[:\s]*([^\n]+(?:\n(?!Situation|Task|Result|S:|T:|R:)[^\n]+)*)/i)?.[1]?.trim()
+  const result = s.match(/(?:Result|R)[:\s]*([^\n]+(?:\n(?!Situation|Task|Action|S:|T:|A:)[^\n]+)*)/i)?.[1]?.trim()
+  if ([situation, task, action, result].every(Boolean)) {
+    return { situation, task, action, result }
+  }
+  return null
+}
+
+// Extract JSON from response (handle ```json ... ``` wrapper)
+function extractJSON(content) {
+  const trimmed = (content || '').trim()
+  const codeBlock = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/)
+  const raw = codeBlock ? codeBlock[1].trim() : trimmed
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
 function InterviewTrainer() {
   const navigate = useNavigate()
   const [requirements, setRequirements] = useState('')
-  const [interviewType, setInterviewType] = useState('academic') // 'academic' or 'industry'
-  const [interviewStyle, setInterviewStyle] = useState('technical') // 'technical' or 'behavioral'
+  const [interviewType, setInterviewType] = useState('academic')
+  const [interviewStyle, setInterviewStyle] = useState('technical')
   const [generatedQuestions, setGeneratedQuestions] = useState([])
   const [questionAnswers, setQuestionAnswers] = useState({})
+  const [answerDetails, setAnswerDetails] = useState({}) // { [id]: { keyPoints?: string[], star?: {...} } }
   const [expandedAnswers, setExpandedAnswers] = useState({})
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
   const [loadingAnswers, setLoadingAnswers] = useState({})
+  const [followUps, setFollowUps] = useState({}) // { [questionId]: string[] }
+  const [loadingFollowUp, setLoadingFollowUp] = useState({})
+  const [timedMode, setTimedMode] = useState(false)
+  const [timedQuestionId, setTimedQuestionId] = useState(null)
+  const [timeLeft, setTimeLeft] = useState(null)
+  const timerRef = useRef(null)
+  const [savedSessions, setSavedSessions] = useState([])
+  const [showSaveModal, setShowSaveModal] = useState(false)
+  const [showLoadModal, setShowLoadModal] = useState(false)
+
+  // Load saved sessions from localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      const list = raw ? JSON.parse(raw) : []
+      setSavedSessions(Array.isArray(list) ? list : [])
+    } catch {
+      setSavedSessions([])
+    }
+  }, [showLoadModal])
+
+  // Timer countdown
+  useEffect(() => {
+    if (timeLeft === null) return
+    if (timeLeft <= 0) {
+      if (timedQuestionId !== null) {
+        setExpandedAnswers(prev => ({ ...prev, [timedQuestionId]: true }))
+        setTimedQuestionId(null)
+      }
+      setTimeLeft(null)
+      if (timerRef.current) clearInterval(timerRef.current)
+      return
+    }
+    timerRef.current = setInterval(() => {
+      setTimeLeft(prev => (prev <= 1 ? 0 : prev - 1))
+    }, 1000)
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+  }, [timeLeft, timedQuestionId])
 
   const handleRequirementsChange = (e) => {
-    const value = limitInputLength(e.target.value, 5000)
-    setRequirements(value)
+    setRequirements(limitInputLength(e.target.value, 5000))
   }
 
-  const handleGenerate = async (isRefresh = false) => {
-    // 验证输入 - 拒绝包含脏话的输入
+  const handleGenerate = async () => {
     const validation = validateAndSanitizeText(requirements, {
       maxLength: 5000,
       minLength: 10,
       required: true,
-      filterProfanity: false // 直接拒绝脏话而不是过滤
+      filterProfanity: false
     })
-
     if (!validation.valid) {
       alert(validation.message || 'Please check your input')
       return
     }
-
     if (!requirements.trim()) {
       alert('Please enter interview requirements')
       return
     }
 
     setLoading(true)
+    setFollowUps({})
+    setAnswerDetails({})
     try {
-      // 使用清理后的输入
       const cleanedRequirements = validation.cleaned
-      
-      // 构建基于选择的 prompt
-      const interviewContext = interviewType === 'academic' 
+      const interviewContext = interviewType === 'academic'
         ? 'academic/research positions (e.g., Predoc, Research Assistant, PhD programs)'
         : 'industry positions (e.g., consulting companies, economic consulting firms, data analytics roles)'
-      
-      const questionType = interviewStyle === 'technical'
-        ? 'technical questions focusing on economics, econometrics, data analysis, research methods, and quantitative skills'
-        : 'behavioral questions focusing on past experiences, problem-solving, teamwork, leadership, and situational scenarios'
-      
-      const prompt = `Generate ${interviewStyle === 'technical' ? 'technical' : 'behavioral'} interview questions for ${interviewContext} based on the following requirements:
+      const isTechnical = interviewStyle === 'technical'
+
+      const jsonInstruction = isTechnical
+        ? `Respond with ONLY a valid JSON object (no markdown, no extra text). Use this exact structure:
+{
+  "questions": [ { "question": "question text", "category": "Econometrics|Methodology|Research Experience|General" } ],
+  "answers": [ "full answer 1", "full answer 2", ... ],
+  "answerKeyPoints": [ ["point1", "point2"], ["point1", "point2"], ... ],
+  "notes": "Preparation tips: key topics, pitfalls, advice (use clear formatting)"
+}
+Provide exactly 10 questions and 10 answers. For each answer in answerKeyPoints provide 2-4 bullet points.`
+        : `Respond with ONLY a valid JSON object (no markdown, no extra text). Use this exact structure:
+{
+  "questions": [ { "question": "question text", "category": "Behavioral|Experience|..." } ],
+  "answers": [ "answer with STAR structure. Start with Situation:, then Task:, Action:, Result: so each part is clearly labeled.", ... ],
+  "notes": "Preparation tips and advice (use clear formatting)"
+}
+Provide exactly 10 questions and 10 answers. Each answer must include the labels Situation:, Task:, Action:, Result: in the text.`
+
+      const prompt = `Generate ${interviewStyle} interview questions for ${interviewContext} based on:
 
 ${cleanedRequirements}
 
-Please provide EXACTLY 10 ${questionType}. For each question, provide a brief answer (2-3 sentences).
-
-Format your response as:
-Question 1: [question text]
-Answer 1: [brief answer]
-
-Question 2: [question text]
-Answer 2: [brief answer]
-
-Question 3: [question text]
-Answer 3: [brief answer]
-
-...continue with Question 4, 5, 6, 7, 8, 9, and 10.
-
-After all 10 questions and answers, provide preparation tips and notes. Format the tips section with:
-📝 Important notes and tips for preparation
-📚 Key topics to review
-⚠️ Common pitfalls to avoid
-💡 Additional helpful advice
-
-Use emojis and clear formatting to make the tips section visually appealing and easy to read.`
+${jsonInstruction}`
 
       const systemMessage = interviewType === 'academic'
-        ? interviewStyle === 'technical'
-          ? 'You are an expert in economics and public policy research, specializing in preparing candidates for academic technical interviews (Predoc, Research Assistant positions). Generate realistic technical questions about econometrics, research methods, data analysis, and academic research experience.'
-          : 'You are an expert in academic hiring, specializing in preparing candidates for behavioral interviews for academic/research positions. Generate behavioral questions about research experience, collaboration, problem-solving in academic settings, and handling research challenges.'
-        : interviewStyle === 'technical'
-          ? 'You are an expert in economic consulting and industry hiring, specializing in preparing candidates for technical interviews at consulting companies and economic consulting firms. Generate realistic technical questions about data analysis, economic modeling, client problem-solving, and quantitative skills relevant to consulting work.'
-          : 'You are an expert in industry hiring, specializing in preparing candidates for behavioral interviews at consulting companies and economic consulting firms. Generate behavioral questions about client interactions, teamwork, handling deadlines, problem-solving in business contexts, and leadership experiences.'
+        ? isTechnical
+          ? 'You are an expert in economics and public policy research, preparing candidates for academic technical interviews (Predoc, RA). Generate realistic technical questions and concise, accurate answers with key points.'
+          : 'You are an expert in academic hiring, preparing candidates for behavioral interviews. Generate behavioral questions and answers using the STAR method with clear Situation, Task, Action, Result labels.'
+        : isTechnical
+          ? 'You are an expert in economic consulting hiring, preparing candidates for technical interviews. Generate technical questions and concise answers with key points.'
+          : 'You are an expert in industry hiring, preparing candidates for behavioral interviews. Generate behavioral questions and STAR-format answers with clear labels.'
 
       const response = await callChatGPT(prompt, systemMessage)
-      
       const content = response.content || ''
-      
-      // Parse questions and answers from response
-      const questions = []
-      const answers = {}
-      
-      // Try to match "Question X: ... Answer X: ..." pattern
-      const qaPattern = /Question\s*\d+[:\s]+([^\n]+(?:\n(?!Question|Answer)[^\n]+)*)\s*Answer\s*\d+[:\s]+([^\n]+(?:\n(?!Question|Answer)[^\n]+)*)/gi
-      let match
-      let idx = 0
-      
-      while ((match = qaPattern.exec(content)) !== null && idx < 10) {
-        const questionText = match[1].trim()
-        const answerText = match[2].trim()
-        const category = questionText.includes('method') || questionText.includes('DID') || questionText.includes('IV') || questionText.includes('regression')
-          ? 'Econometrics' 
-          : questionText.includes('research') || questionText.includes('project')
-          ? 'Research Experience'
-          : questionText.includes('difference') || questionText.includes('explain')
-          ? 'Methodology'
-          : 'General'
-        
-        questions.push({ question: questionText, category, id: idx })
-        answers[idx] = answerText
-        idx++
-      }
-      
-      // Fallback: if pattern doesn't match, try simpler pattern
-      if (questions.length === 0) {
-        const questionMatches = content.match(/\d+\.\s*([^\n]+)/g) || content.match(/Question[:\s]+([^\n]+)/gi) || []
-        questions.push(...questionMatches.slice(0, 10).map((q, i) => {
-          const questionText = q.replace(/^\d+\.\s*|^Question[:\s]+/i, '').trim()
-          const category = questionText.includes('method') || questionText.includes('DID') || questionText.includes('IV')
-            ? 'Econometrics' 
-            : questionText.includes('research') || questionText.includes('project')
-            ? 'Research Experience'
-            : 'General'
-          return { question: questionText, category, id: i }
+      const data = extractJSON(content)
+
+      let finalQuestions = []
+      let answers = {}
+      let details = {}
+      let extractedNotes = 'Please review core concepts and be prepared to discuss your experience.'
+
+      if (data && Array.isArray(data.questions) && data.questions.length >= 10) {
+        finalQuestions = data.questions.slice(0, 10).map((q, idx) => ({
+          question: typeof q === 'string' ? q : (q.question || ''),
+          category: (typeof q === 'object' && q.category) ? q.category : 'General',
+          id: idx
         }))
+        const ansList = Array.isArray(data.answers) ? data.answers : []
+        ansList.forEach((a, idx) => {
+          if (idx < 10) {
+            const text = typeof a === 'string' ? a : (a?.full || a?.answer || '')
+            answers[idx] = text
+            if (isTechnical && Array.isArray(data.answerKeyPoints) && data.answerKeyPoints[idx]) {
+              details[idx] = { keyPoints: data.answerKeyPoints[idx] }
+            } else if (!isTechnical && text) {
+              const star = parseSTAR(text)
+              if (star) details[idx] = { star }
+            }
+          }
+        })
+        if (typeof data.notes === 'string' && data.notes.trim()) extractedNotes = data.notes.trim()
       }
 
-      // Ensure we have exactly 10 questions
-      let finalQuestions = questions
       if (finalQuestions.length < 10) {
-        // If we have fewer than 10, try to regenerate or pad with generic questions
-        const needed = 10 - finalQuestions.length
-        const genericQuestions = [
-          { question: 'Explain the difference between correlation and causation.', category: 'Methodology', id: finalQuestions.length },
-          { question: 'What is the difference between OLS and IV estimation?', category: 'Econometrics', id: finalQuestions.length + 1 },
-          { question: 'How would you handle missing data in a research project?', category: 'Methodology', id: finalQuestions.length + 2 },
-          { question: 'Describe a research project you have worked on.', category: 'Research Experience', id: finalQuestions.length + 3 },
-          { question: 'What is the difference between fixed effects and random effects models?', category: 'Econometrics', id: finalQuestions.length + 4 },
-          { question: 'How do you approach a new research question?', category: 'Methodology', id: finalQuestions.length + 5 },
-          { question: 'Explain the concept of instrumental variables.', category: 'Econometrics', id: finalQuestions.length + 6 },
-          { question: 'What statistical software are you most comfortable with?', category: 'General', id: finalQuestions.length + 7 },
-          { question: 'How do you ensure the validity of your research findings?', category: 'Methodology', id: finalQuestions.length + 8 },
-          { question: 'What is your experience with difference-in-differences analysis?', category: 'Econometrics', id: finalQuestions.length + 9 }
-        ]
-        finalQuestions = [...finalQuestions, ...genericQuestions.slice(0, needed)]
-      } else if (finalQuestions.length > 10) {
-        // If we have more than 10, take only the first 10
-        finalQuestions = finalQuestions.slice(0, 10)
+        const qaPattern = /Question\s*\d+[:\s]+([^\n]+(?:\n(?!Question|Answer)[^\n]+)*)\s*Answer\s*\d+[:\s]+([^\n]+(?:\n(?!Question|Answer)[^\n]+)*)/gi
+        let match
+        let idx = 0
+        while ((match = qaPattern.exec(content)) !== null && idx < 10) {
+          const questionText = match[1].trim()
+          const answerText = match[2].trim()
+          const category = questionText.includes('method') || questionText.includes('DID') || questionText.includes('IV') ? 'Econometrics' : questionText.includes('research') || questionText.includes('project') ? 'Research Experience' : questionText.includes('difference') || questionText.includes('explain') ? 'Methodology' : 'General'
+          finalQuestions.push({ question: questionText, category, id: idx })
+          answers[idx] = answerText
+          if (!isTechnical && answerText) {
+            const star = parseSTAR(answerText)
+            if (star) details[idx] = { star }
+          }
+          idx++
+        }
+        const notesMatch = content.match(/(?:notes|tips|preparation|📝|📚|⚠️|💡)[:\s]+([\s\S]+)/i) || content.match(/(?:📝|📚|⚠️|💡)[\s\S]+/i)
+        if (notesMatch) extractedNotes = (notesMatch[1] || notesMatch[0] || '').trim()
       }
-      
-      // Ensure all questions have sequential IDs from 0 to 9
-      finalQuestions = finalQuestions.map((q, idx) => ({ ...q, id: idx }))
-      
-      setGeneratedQuestions(finalQuestions)
-      
-      // Generate answers for questions that don't have them
-      if (Object.keys(answers).length > 0) {
-        setQuestionAnswers(answers)
-      } else {
-        // Generate answers for all questions asynchronously
-        generateAnswersForQuestions(finalQuestions)
-      }
-      
-      // Extract notes (everything after "Notes", "Tips", or emoji markers)
-      const notesMatch = content.match(/(?:notes|tips|preparation|📝|📚|⚠️|💡)[:\s]+([\s\S]+)/i) || 
-                        content.match(/(?:📝|📚|⚠️|💡)[\s\S]+/i) ||
-                        content.match(/After all 10 questions[:\s]+([\s\S]+)/i)
-      const extractedNotes = notesMatch ? notesMatch[1] || notesMatch[0] : content.split('Question')[0] || 'Please review core concepts and be prepared to discuss your experience.'
 
+      if (finalQuestions.length < 10) {
+        const simpleQ = content.match(/\d+\.\s*([^\n]+)/g) || content.match(/Question[:\s]+([^\n]+)/gi) || []
+        finalQuestions = simpleQ.slice(0, 10).map((q, i) => {
+          const questionText = q.replace(/^\d+\.\s*|^Question[:\s]+/i, '').trim()
+          const category = questionText.includes('method') || questionText.includes('DID') || questionText.includes('IV') ? 'Econometrics' : questionText.includes('research') || questionText.includes('project') ? 'Research Experience' : 'General'
+          return { question: questionText, category, id: i }
+        })
+      }
+      finalQuestions = finalQuestions.slice(0, 10).map((q, idx) => ({ ...q, id: idx }))
+
+      setGeneratedQuestions(finalQuestions)
+      setQuestionAnswers(answers)
+      setAnswerDetails(details)
+
+      const missingAnswerIds = finalQuestions.filter(q => answers[q.id] == null || answers[q.id] === '').map(q => q.id)
+      if (missingAnswerIds.length > 0) {
+        await generateAnswersBatched(finalQuestions, missingAnswerIds, isTechnical)
+      }
       setNotes(extractedNotes)
     } catch (error) {
       alert('Error generating interview questions. Please try again.')
@@ -183,53 +224,165 @@ Use emojis and clear formatting to make the tips section visually appealing and 
     }
   }
 
-  const generateAnswersForQuestions = async (questions) => {
-    const answers = {}
-    setLoadingAnswers({})
-    
-    const context = interviewType === 'academic' 
-      ? 'academic/research position (e.g., Predoc, Research Assistant)'
-      : 'industry position (e.g., consulting company, economic consulting firm)'
-    
-    const answerStyle = interviewStyle === 'technical'
-      ? 'technical answer focusing on accuracy, methodology, and quantitative skills'
-      : 'behavioral answer using the STAR method (Situation, Task, Action, Result) with concrete examples'
-    
-    for (const q of questions) {
-      setLoadingAnswers(prev => ({ ...prev, [q.id]: true }))
+  async function generateAnswersBatched(questions, missingIds, isTechnical) {
+    const batchSize = 3
+    setLoadingAnswers(Object.fromEntries(missingIds.map(id => [id, true])))
+
+    for (let i = 0; i < missingIds.length; i += batchSize) {
+      const batch = missingIds.slice(i, i + batchSize)
+      const batchQuestions = batch.map(id => questions.find(q => q.id === id)).filter(Boolean)
+      const prompt = `For each of the following ${interviewStyle} interview questions, provide a brief professional answer (2-3 sentences). ${!isTechnical ? 'Use STAR (Situation, Task, Action, Result) and label each part.' : 'Focus on accuracy and key points.'}
+
+Respond with ONLY a JSON array of answers in order, one string per question. Example: ["answer 1", "answer 2", "answer 3"]
+
+Questions:
+${batchQuestions.map((q, j) => `${j + 1}. ${q.question}`).join('\n')}`
+
+      const systemMessage = isTechnical
+        ? 'You are an expert helping candidates prepare for technical interviews. Reply with a JSON array of answer strings only.'
+        : 'You are an expert helping candidates prepare for behavioral interviews. Reply with a JSON array of answer strings, each using Situation:, Task:, Action:, Result:.'
+
       try {
-        const prompt = `Provide a brief, professional answer (2-3 sentences) to this ${interviewStyle} interview question for a ${context}:
-
-${q.question}
-
-Keep the answer concise, accurate, and suitable for a ${interviewStyle} interview. ${interviewStyle === 'behavioral' ? 'Use the STAR method if applicable.' : ''}`
-        
-        const systemMessage = interviewType === 'academic'
-          ? interviewStyle === 'technical'
-            ? 'You are an expert interviewer helping candidates prepare for technical interviews in economics and public policy research.'
-            : 'You are an expert interviewer helping candidates prepare for behavioral interviews for academic/research positions.'
-          : interviewStyle === 'technical'
-            ? 'You are an expert interviewer helping candidates prepare for technical interviews at consulting companies and economic consulting firms.'
-            : 'You are an expert interviewer helping candidates prepare for behavioral interviews at consulting companies and economic consulting firms.'
-        
         const response = await callChatGPT(prompt, systemMessage)
-        answers[q.id] = response.content || 'Answer will be generated...'
-      } catch (error) {
-        console.error(`Error generating answer for question ${q.id}:`, error)
-        answers[q.id] = 'Unable to generate answer. Please try again.'
-      } finally {
-        setLoadingAnswers(prev => ({ ...prev, [q.id]: false }))
+        const data = extractJSON(response.content || '')
+        const ansArray = Array.isArray(data) ? data : (data && Array.isArray(data.answers) ? data.answers : null)
+        if (ansArray) {
+          const newAnswers = {}
+          const newDetails = {}
+          batch.forEach((id, j) => {
+            const text = ansArray[j]
+            if (text != null) {
+              newAnswers[id] = typeof text === 'string' ? text : String(text)
+              if (!isTechnical && newAnswers[id]) {
+                const star = parseSTAR(newAnswers[id])
+                if (star) newDetails[id] = { star }
+              }
+            }
+          })
+          setQuestionAnswers(prev => ({ ...prev, ...newAnswers }))
+          setAnswerDetails(prev => ({ ...prev, ...newDetails }))
+        }
+      } catch (e) {
+        const fallback = Object.fromEntries(batch.map(id => [id, 'Unable to generate answer. Please try again.']))
+        setQuestionAnswers(prev => ({ ...prev, ...fallback }))
       }
     }
-    
-    setQuestionAnswers(answers)
+
+    setLoadingAnswers({})
   }
 
   const toggleAnswer = (questionId) => {
-    setExpandedAnswers(prev => ({
-      ...prev,
-      [questionId]: !prev[questionId]
-    }))
+    setExpandedAnswers(prev => ({ ...prev, [questionId]: !prev[questionId] }))
+  }
+
+  const expandAllAnswers = () => {
+    if (generatedQuestions.length === 0) return
+    setExpandedAnswers(Object.fromEntries(generatedQuestions.map(q => [q.id, true])))
+  }
+
+  const collapseAllAnswers = () => {
+    setExpandedAnswers({})
+  }
+
+  const handleSaveSession = () => {
+    const name = `Session ${new Date().toLocaleString()}`
+    const session = {
+      id: Date.now().toString(),
+      name,
+      createdAt: Date.now(),
+      config: { requirements, interviewType, interviewStyle },
+      generatedQuestions,
+      questionAnswers,
+      answerDetails,
+      notes
+    }
+    const list = [...savedSessions, session]
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
+    setSavedSessions(list)
+    setShowSaveModal(false)
+  }
+
+  const handleLoadSession = (session) => {
+    setRequirements(session.config?.requirements ?? '')
+    setInterviewType(session.config?.interviewType ?? 'academic')
+    setInterviewStyle(session.config?.interviewStyle ?? 'technical')
+    setGeneratedQuestions(session.generatedQuestions ?? [])
+    setQuestionAnswers(session.questionAnswers ?? {})
+    setAnswerDetails(session.answerDetails ?? {})
+    setNotes(session.notes ?? '')
+    setExpandedAnswers({})
+    setShowLoadModal(false)
+  }
+
+  const handleDeleteSession = (id) => {
+    const list = savedSessions.filter(s => s.id !== id)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
+    setSavedSessions(list)
+  }
+
+  const exportMarkdown = () => {
+    const lines = ['# Interview Practice', '', `Type: ${interviewType} | Style: ${interviewStyle}`, '', '---', '']
+    generatedQuestions.forEach((q, i) => {
+      lines.push(`## ${i + 1}. ${q.question}`, '', `*${q.category}*`, '')
+      const ans = questionAnswers[q.id]
+      if (ans) {
+        const star = answerDetails[q.id]?.star
+        if (star) {
+          lines.push('**Situation:**', star.situation, '', '**Task:**', star.task, '', '**Action:**', star.action, '', '**Result:**', star.result, '')
+        } else {
+          const kp = answerDetails[q.id]?.keyPoints
+          if (kp && kp.length) {
+            lines.push('**Key points:**', ...kp.map(p => `- ${p}`), '', '**Full answer:**', ans, '')
+          } else lines.push(ans, '')
+        }
+      }
+      lines.push('---', '')
+    })
+    lines.push('## Preparation Notes', '', notes)
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `interview-practice-${new Date().toISOString().slice(0, 10)}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const copyMarkdown = () => {
+    const lines = ['# Interview Practice', '', `Type: ${interviewType} | Style: ${interviewStyle}`, '']
+    generatedQuestions.forEach((q, i) => {
+      lines.push(`## ${i + 1}. ${q.question}`, '', `*${q.category}*`, '')
+      const ans = questionAnswers[q.id]
+      if (ans) lines.push(ans, '')
+      lines.push('')
+    })
+    lines.push('## Preparation Notes', '', notes)
+    navigator.clipboard.writeText(lines.join('\n'))
+    alert('Copied to clipboard.')
+  }
+
+  const startTimerForQuestion = (questionId) => {
+    setTimedQuestionId(questionId)
+    setExpandedAnswers(prev => ({ ...prev, [questionId]: false }))
+    setTimeLeft(TIMER_SECONDS)
+  }
+
+  const handleGenerateFollowUp = async (questionId, questionText) => {
+    setLoadingFollowUp(prev => ({ ...prev, [questionId]: true }))
+    try {
+      const prompt = `For this interview question, generate 1 or 2 short follow-up questions that an interviewer might ask next. Return ONLY a JSON array of strings. Example: ["Follow-up question 1?", "Follow-up question 2?"]
+
+Question: ${questionText}`
+      const response = await callChatGPT(prompt, 'You are an expert interviewer. Reply with a JSON array of 1-2 follow-up question strings only.')
+      const data = extractJSON(response.content || '')
+      const list = Array.isArray(data) ? data : (data && Array.isArray(data.followUps) ? data.followUps : [])
+      const followUpStrings = list.slice(0, 2).map(f => typeof f === 'string' ? f : String(f))
+      setFollowUps(prev => ({ ...prev, [questionId]: followUpStrings }))
+    } catch {
+      setFollowUps(prev => ({ ...prev, [questionId]: ['Unable to generate follow-ups.'] }))
+    } finally {
+      setLoadingFollowUp(prev => ({ ...prev, [questionId]: false }))
+    }
   }
 
   return (
@@ -346,26 +499,63 @@ Keep the answer concise, accurate, and suitable for a ${interviewStyle} intervie
         {/* Generated Questions */}
         {generatedQuestions.length > 0 && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
               <h2 className="text-xl font-bold">Interview Questions</h2>
-              <button
-                onClick={() => handleGenerate(true)}
-                disabled={loading}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition disabled:opacity-50 text-sm"
-              >
-                {loading ? 'Generating...' : '🔄 Generate New Questions'}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => handleGenerate()}
+                  disabled={loading}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition disabled:opacity-50 text-sm"
+                >
+                  {loading ? 'Generating...' : '🔄 New'}
+                </button>
+                <button onClick={expandAllAnswers} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm">
+                  Expand all
+                </button>
+                <button onClick={collapseAllAnswers} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm">
+                  Collapse all
+                </button>
+                <label className="flex items-center gap-2 text-sm text-gray-600">
+                  <input type="checkbox" checked={timedMode} onChange={(e) => setTimedMode(e.target.checked)} />
+                  Timed (2 min)
+                </label>
+                <button onClick={() => setShowSaveModal(true)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm">
+                  Save
+                </button>
+                <button onClick={() => setShowLoadModal(true)} className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 text-sm">
+                  Load
+                </button>
+                <button onClick={copyMarkdown} className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm">
+                  Copy MD
+                </button>
+                <button onClick={exportMarkdown} className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm">
+                  Export .md
+                </button>
+              </div>
             </div>
             <div className="space-y-6">
               {generatedQuestions.map((item) => (
                 <div key={item.id} className="border-l-4 border-indigo-500 pl-4 py-3 bg-gray-50 rounded-r-lg">
-                  <div className="flex items-center gap-2 mb-2">
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className="text-xs font-semibold text-indigo-600 bg-indigo-100 px-2 py-1 rounded">
                       {item.category}
                     </span>
+                    {timedMode && (
+                      <button
+                        onClick={() => startTimerForQuestion(item.id)}
+                        className="text-xs px-2 py-1 bg-amber-100 text-amber-800 rounded hover:bg-amber-200"
+                      >
+                        ⏱ Start 2 min
+                      </button>
+                    )}
+                    {timedQuestionId === item.id && timeLeft != null && (
+                      <span className="text-sm font-mono text-amber-700">
+                        {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
+                      </span>
+                    )}
                   </div>
                   <p className="text-gray-800 font-medium mb-3">{item.question}</p>
-                  
+
                   {/* Answer Section */}
                   {loadingAnswers[item.id] ? (
                     <div className="text-sm text-gray-500 italic">Generating answer...</div>
@@ -375,20 +565,105 @@ Keep the answer concise, accurate, and suitable for a ${interviewStyle} intervie
                         onClick={() => toggleAnswer(item.id)}
                         className="text-sm text-indigo-600 hover:text-indigo-700 font-semibold mb-2 flex items-center gap-1"
                       >
-                        {expandedAnswers[item.id] ? '▼' : '▶'} 
-                        {expandedAnswers[item.id] ? 'Hide Answer' : 'Show Answer'}
+                        {expandedAnswers[item.id] ? '▼' : '▶'} {expandedAnswers[item.id] ? 'Hide Answer' : 'Show Answer'}
                       </button>
                       {expandedAnswers[item.id] && (
-                        <div className="bg-white border border-indigo-200 rounded-lg p-4 mt-2">
-                          <p className="text-gray-700 text-sm leading-relaxed">{questionAnswers[item.id]}</p>
+                        <div className="bg-white border border-indigo-200 rounded-lg p-4 mt-2 space-y-3">
+                          {interviewStyle === 'behavioral' && answerDetails[item.id]?.star ? (
+                            <div className="grid gap-2 text-sm">
+                              <div><span className="font-semibold text-indigo-700">Situation:</span> <span className="text-gray-700">{answerDetails[item.id].star.situation}</span></div>
+                              <div><span className="font-semibold text-indigo-700">Task:</span> <span className="text-gray-700">{answerDetails[item.id].star.task}</span></div>
+                              <div><span className="font-semibold text-indigo-700">Action:</span> <span className="text-gray-700">{answerDetails[item.id].star.action}</span></div>
+                              <div><span className="font-semibold text-indigo-700">Result:</span> <span className="text-gray-700">{answerDetails[item.id].star.result}</span></div>
+                            </div>
+                          ) : interviewStyle === 'technical' && answerDetails[item.id]?.keyPoints?.length > 0 ? (
+                            <>
+                              <div className="text-sm">
+                                <span className="font-semibold text-indigo-700">Key points:</span>
+                                <ul className="list-disc list-inside mt-1 text-gray-700">
+                                  {answerDetails[item.id].keyPoints.map((p, i) => (
+                                    <li key={i}>{p}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                              <div className="text-sm pt-2 border-t border-gray-200">
+                                <span className="font-semibold text-indigo-700">Full answer:</span>
+                                <p className="text-gray-700 mt-1 leading-relaxed">{questionAnswers[item.id]}</p>
+                              </div>
+                            </>
+                          ) : (
+                            <p className="text-gray-700 text-sm leading-relaxed">{questionAnswers[item.id]}</p>
+                          )}
                         </div>
                       )}
+                      <div className="mt-2">
+                        <button
+                          onClick={() => handleGenerateFollowUp(item.id, item.question)}
+                          disabled={loadingFollowUp[item.id]}
+                          className="text-xs text-indigo-600 hover:text-indigo-700"
+                        >
+                          {loadingFollowUp[item.id] ? '...' : '+ Follow-up questions'}
+                        </button>
+                        {followUps[item.id]?.length > 0 && (
+                          <ul className="mt-1 text-xs text-gray-600 list-disc list-inside">
+                            {followUps[item.id].map((f, i) => (
+                              <li key={i}>{f}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="text-sm text-gray-400 italic">Answer will be generated...</div>
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Save modal */}
+        {showSaveModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowSaveModal(false)}>
+            <div className="bg-white rounded-xl shadow-lg max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+              <h3 className="text-lg font-bold mb-2">Save session</h3>
+              <p className="text-gray-600 text-sm mb-4">Save current questions, answers, and notes to this device.</p>
+              <div className="flex gap-2">
+                <button onClick={handleSaveSession} className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Save</button>
+                <button onClick={() => setShowSaveModal(false)} className="px-4 py-2 bg-gray-200 rounded-lg">Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Load modal */}
+        {showLoadModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowLoadModal(false)}>
+            <div className="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+              <h3 className="text-lg font-bold p-4 border-b">Load session</h3>
+              <div className="overflow-y-auto p-4 flex-1">
+                {savedSessions.length === 0 ? (
+                  <p className="text-gray-500 text-sm">No saved sessions.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {savedSessions.map(s => (
+                      <li key={s.id} className="flex items-center justify-between gap-2 py-2 border-b border-gray-100">
+                        <div className="min-w-0">
+                          <p className="font-medium text-gray-800 truncate">{s.name || 'Unnamed'}</p>
+                          <p className="text-xs text-gray-500">{new Date(s.createdAt).toLocaleString()}</p>
+                        </div>
+                        <div className="flex gap-1 shrink-0">
+                          <button onClick={() => handleLoadSession(s)} className="px-3 py-1 bg-indigo-600 text-white rounded text-sm">Load</button>
+                          <button onClick={() => handleDeleteSession(s.id)} className="px-3 py-1 bg-red-100 text-red-700 rounded text-sm">Delete</button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="p-4 border-t">
+                <button onClick={() => setShowLoadModal(false)} className="w-full px-4 py-2 bg-gray-200 rounded-lg">Close</button>
+              </div>
             </div>
           </div>
         )}

@@ -7,12 +7,12 @@ import SignUp from './SignUp'
 function Dashboard({ isAuthenticated, setIsAuthenticated, isGuest = false }) {
   const navigate = useNavigate()
   const [showAuthModal, setShowAuthModal] = useState(false)
-  const [authMode, setAuthMode] = useState('login') // 'login' or 'signup'
+  const [authMode, setAuthMode] = useState('login')
   const [userEmail, setUserEmail] = useState('')
   const [showLoginPrompt, setShowLoginPrompt] = useState(false)
 
   // 访客可以访问的工具列表
-  const guestAccessibleTools = ['outside-links', 'book-list', 'find-professors', 'offer-generator', 'knowledge', 'topics', 'career-path']
+  const guestAccessibleTools = ['outside-links', 'book-list', 'find-professors', 'offer-generator', 'knowledge', 'topics', 'career-path', 'paper-replication']
 
   useEffect(() => {
     // Check authentication status and update user email
@@ -56,6 +56,17 @@ function Dashboard({ isAuthenticated, setIsAuthenticated, isGuest = false }) {
       clearInterval(interval)
     }
   }, [isAuthenticated, setIsAuthenticated])
+
+  const handleRagButtonClick = () => {
+    if (isGuest || !isAuthenticated) {
+      setAuthMode('login')
+      setShowAuthModal(true)
+      setShowLoginPrompt(true)
+      setTimeout(() => setShowLoginPrompt(false), 3000)
+    } else {
+      navigate('/documents')
+    }
+  }
 
   const handleLogout = () => {
     localStorage.removeItem('authToken')
@@ -113,112 +124,26 @@ function Dashboard({ isAuthenticated, setIsAuthenticated, isGuest = false }) {
     setShowAuthModal(false)
   }
 
-  const tools = [
-    {
-      id: 'empirical-copilot',
-      title: 'Empirical Copilot',
-      description: 'Generate R/Python/Stata code from text descriptions or formula screenshots from papers',
-      icon: '💻',
-      color: 'from-green-500 to-emerald-500',
-    },
-    {
-      id: 'interview-trainer',
-      title: 'Interview Trainer',
-      description: 'Practice Predoc technical interviews with AI-generated questions',
-      icon: '🎯',
-      color: 'from-amber-500 to-orange-500',
-    },
-    {
-      id: 'cover-letter-editor',
-      title: 'Cover Letter Editor',
-      description: 'Upload your cover letter and job description to get AI-powered revision suggestions with highlighted changes',
-      icon: '✉️',
-      color: 'from-sky-500 to-blue-500',
-    },
-    {
-      id: 'offer-generator',
-      title: 'Offer Generator',
-      description: 'Generate humorous fake offer letters for academic and industry positions',
-      icon: '🎉',
-      color: 'from-yellow-500 to-amber-500',
-    },
-    {
-      id: 'pic-to-latex',
-      title: 'Formula to LaTeX',
-      description: 'Convert formulas to LaTeX: upload images or describe in words (e.g., "Cobb-Douglas function", "LATE formula")',
-      icon: '🔢',
-      color: 'from-violet-500 to-purple-500',
-    },
-    {
-      id: 'proof-writer',
-      title: 'Proof Writer',
-      description: 'Upload a formula image and generate a mathematical proof or explanation',
-      icon: '✍️',
-      color: 'from-purple-600 to-indigo-600',
-    },
-    {
-      id: 'find-professors',
-      title: 'Find Professors',
-      description: 'Search for economics professors by name or research field and school',
-      icon: '👨‍🏫',
-      color: 'from-teal-500 to-cyan-500',
-    },
-    {
-      id: 'book-list',
-      title: 'Book List',
-      description: 'Recommended books in economics and public policy by professors',
-      icon: '📚',
-      color: 'from-purple-500 to-pink-500',
-    },
-    {
-      id: 'paper-deconstructor',
-      title: 'Paper Deconstructor',
-      description: 'Upload papers to extract strategies, assumptions, limitations, and summaries',
-      icon: '📄',
-      color: 'from-orange-500 to-red-500',
-    },
-    {
-      id: 'topics',
-      title: 'Topics',
-      description: 'Explore research topics in Public Policy and Applied Economics with resources and links',
-      icon: '📑',
-      color: 'from-rose-500 to-pink-500',
-    },
-    {
-      id: 'knowledge',
-      title: 'Knowledge Base',
-      description: 'Essential knowledge points and key concepts in economics, econometrics, and data analysis',
-      icon: '🧠',
-      color: 'from-emerald-500 to-teal-500',
-    },
-    {
-      id: 'career-path',
-      title: 'Career Path',
-      description: 'Explore career directions and opportunities for Public Policy graduates',
-      icon: '🚀',
-      color: 'from-blue-600 to-indigo-600',
-    },
-    {
-      id: 'policy-memo',
-      title: 'Policy Memo Generator',
-      description: 'Generate structured policy memos with key points and actionable recommendations',
-      icon: '📝',
-      color: 'from-blue-500 to-cyan-500',
-    },
-    {
-      id: 'outside-links',
-      title: 'Outside Links',
-      description: 'Useful resources and links for economics and public policy research',
-      icon: '🔗',
-      color: 'from-indigo-500 to-blue-500',
-    },
-    {
-      id: 'literature-helper',
-      title: 'Literature Review Helper',
-      description: 'Upload a PDF paper to get a concise summary suitable for your literature review',
-      icon: '📚',
-      color: 'from-amber-500 to-orange-600',
-    },
+  const mainTools = [
+    { id: 'empirical-copilot', title: 'Empirical Copilot', description: 'Generate R/Python/Stata code from text descriptions or formula screenshots from papers', icon: '💻', color: 'from-green-500 to-emerald-500' },
+    { id: 'interview-trainer', title: 'Interview Trainer', description: 'Practice Predoc technical interviews with AI-generated questions', icon: '🎯', color: 'from-amber-500 to-orange-500' },
+    { id: 'cover-letter-editor', title: 'Cover Letter Editor', description: 'Upload your cover letter and job description to get AI-powered revision suggestions with highlighted changes', icon: '✉️', color: 'from-sky-500 to-blue-500' },
+    { id: 'offer-generator', title: 'Offer Generator', description: 'Generate humorous fake offer letters for academic and industry positions', icon: '🎉', color: 'from-yellow-500 to-amber-500' },
+    { id: 'pic-to-latex', title: 'Formula to LaTeX', description: 'Convert formulas to LaTeX: upload images or describe in words (e.g., "Cobb-Douglas function", "LATE formula")', icon: '🔢', color: 'from-violet-500 to-purple-500' },
+    { id: 'proof-writer', title: 'Proof Writer', description: 'Upload a formula image and generate a mathematical proof or explanation', icon: '✍️', color: 'from-purple-600 to-indigo-600' },
+    { id: 'paper-deconstructor', title: 'Paper Deconstructor', description: 'Upload papers to extract strategies, assumptions, limitations, and summaries', icon: '📄', color: 'from-orange-500 to-red-500' },
+    { id: 'policy-memo', title: 'Policy Memo Generator', description: 'Generate structured policy memos with key points and actionable recommendations', icon: '📝', color: 'from-blue-500 to-cyan-500' },
+    { id: 'literature-helper', title: 'Literature Review Helper', description: 'Upload a PDF paper to get a concise summary suitable for your literature review', icon: '📚', color: 'from-amber-500 to-orange-600' },
+  ]
+
+  const resourceTools = [
+    { id: 'find-professors', title: 'Find Professors', description: 'Search for economics professors by name or research field and school', icon: '👨‍🏫', color: 'from-teal-500 to-cyan-500' },
+    { id: 'book-list', title: 'Book List', description: 'Recommended books in economics and public policy by professors', icon: '📚', color: 'from-purple-500 to-pink-500' },
+    { id: 'topics', title: 'Topics', description: 'Explore research topics in Public Policy and Applied Economics with resources and links', icon: '📑', color: 'from-rose-500 to-pink-500' },
+    { id: 'knowledge', title: 'Knowledge Base', description: 'Essential knowledge points and key concepts in economics, econometrics, and data analysis', icon: '🧠', color: 'from-emerald-500 to-teal-500' },
+    { id: 'career-path', title: 'Career Path', description: 'Explore career directions and opportunities for Public Policy graduates', icon: '🚀', color: 'from-blue-600 to-indigo-600' },
+    { id: 'outside-links', title: 'Outside Links', description: 'Useful resources and links for economics and public policy research', icon: '🔗', color: 'from-indigo-500 to-blue-500' },
+    { id: 'paper-replication', title: 'Paper Replication', description: 'Official data and code repository for replicating AER and other AEA journal papers', icon: '📄', color: 'from-orange-500 to-red-500' },
   ]
 
   return (
@@ -310,12 +235,65 @@ function Dashboard({ isAuthenticated, setIsAuthenticated, isGuest = false }) {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="mb-8">
+          <div className="flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={handleRagButtonClick}
+              className={`px-6 py-3 rounded-xl font-semibold transition flex items-center gap-2 ${
+                isGuest || !isAuthenticated
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+              }`}
+              title={isGuest || !isAuthenticated ? 'Log in to manage your documents' : 'Add and manage documents for RAG'}
+            >
+              <span>📎</span>
+              Upload Documents for your RAG
+            </button>
+            <button
+              type="button"
+              onClick={() => isAuthenticated && navigate('/code-snippet-library')}
+              className={`px-6 py-3 rounded-xl font-semibold transition flex items-center gap-2 ${
+                isGuest || !isAuthenticated
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-sky-500 text-white hover:bg-sky-600'
+              }`}
+              title={isGuest || !isAuthenticated ? 'Log in to manage your code snippets' : 'Browse and upload R/Stata code snippets'}
+            >
+              <span>📚</span>
+              Code Snippet Library
+            </button>
+          </div>
+          {showLoginPrompt && (isGuest || !isAuthenticated) && (
+            <p className="mt-4 text-sm text-amber-600">Please log in to add and manage your documents.</p>
+          )}
+        </div>
+
+        <div className="mb-8">
           <h2 className="text-3xl font-bold text-gray-900 mb-2">Select a Tool</h2>
-          <p className="text-gray-600">Choose an AI-powered tool to assist with your research</p>
+          <p className="text-gray-600">Choose an AI-powered tool to assist with your research. In some tools you can enable &quot;Use my knowledge base&quot; to ground answers in your uploaded documents.</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-14">
+          {mainTools.map((tool) => (
+            <div
+              key={tool.id}
+              onClick={() => handleToolClick(tool.id)}
+              className={`bg-gradient-to-br ${tool.color} rounded-xl p-6 text-white cursor-pointer transform transition hover:scale-105 hover:shadow-xl`}
+            >
+              <div className="text-4xl mb-4">{tool.icon}</div>
+              <h3 className="text-xl font-bold mb-2">{tool.title}</h3>
+              <p className="text-white/90 text-sm">{tool.description}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mb-8">
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">Resources Sharing</h2>
+          <p className="text-gray-600">Links and resources for learning and research.</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {tools.map((tool) => (
+          {resourceTools.map((tool) => (
             <div
               key={tool.id}
               onClick={() => handleToolClick(tool.id)}

@@ -84,23 +84,28 @@ class RewardFunctionLoader:
 class PolicyOptimizer:
     """
     Optimizer for finding optimal policy parameters.
-    Uses the trained Transformer model to predict outcomes and
+    Uses the trained Transformer model(s) to predict outcomes and
     optimizes policy parameters to maximize the reward function.
+    If models (list) is provided, predictions are averaged for uncertainty-aware optimization.
     """
     
     def __init__(
         self,
         model: PanelTransformer,
         reward_loader: RewardFunctionLoader,
-        device: str = 'cpu'
+        device: str = 'cpu',
+        models: Optional[List[PanelTransformer]] = None
     ):
         self.model = model
         self.model.to(device)
         self.model.eval()
+        self.models = models  # Optional list for ensemble (predictions averaged)
+        if self.models:
+            for m in self.models:
+                m.to(device)
+                m.eval()
         self.device = device
         self.reward_loader = reward_loader
-        
-        # Optimization history
         self.optimization_history = []
     
     def _predict_with_params(
@@ -113,39 +118,29 @@ class PolicyOptimizer:
     ) -> Dict[str, np.ndarray]:
         """
         Make predictions with modified policy parameters.
-        
-        Args:
-            base_features: Base features [batch, lookback, n_features]
-            entity_ids: Entity IDs
-            policy_params: Policy parameter values to apply
-            policy_feature_indices: Which feature indices correspond to policy params
-            target_names: Names of target variables
-            
-        Returns:
-            Dictionary mapping target names to predicted values
+        If self.models is set, averages predictions over all models (ensemble).
         """
-        # Modify features with policy parameters
         modified_features = base_features.copy()
         for i, idx in enumerate(policy_feature_indices):
             if i < len(policy_params):
-                # Apply policy change to the last time step
                 modified_features[:, -1, idx] = policy_params[i]
-        
-        # Convert to tensor
         X = torch.tensor(modified_features, dtype=torch.float32).to(self.device)
         entity_tensor = torch.tensor(entity_ids, dtype=torch.long).to(self.device)
-        
-        # Predict
-        with torch.no_grad():
-            predictions, _ = self.model(X, entity_tensor)
-            predictions = predictions.cpu().numpy()
-        
-        # Format as dictionary
+        if self.models:
+            all_preds = []
+            with torch.no_grad():
+                for m in self.models:
+                    pred, _ = m(X, entity_tensor)
+                    all_preds.append(pred.cpu().numpy())
+            predictions = np.mean(all_preds, axis=0)
+        else:
+            with torch.no_grad():
+                predictions, _ = self.model(X, entity_tensor)
+                predictions = predictions.cpu().numpy()
         result = {}
         for i, name in enumerate(target_names):
             if i < predictions.shape[-1]:
-                result[name] = predictions[:, :, i].mean()  # Average across batch and horizon
-        
+                result[name] = float(predictions[:, :, i].mean())
         return result
     
     def _objective_function(
@@ -155,23 +150,37 @@ class PolicyOptimizer:
         entity_ids: np.ndarray,
         policy_feature_indices: List[int],
         target_names: List[str],
-        context: Dict
+        context: Dict,
+        constraints: Optional[List[Dict]] = None
     ) -> float:
         """Objective function for optimization (negative reward for minimization)."""
         predictions = self._predict_with_params(
-            base_features, entity_ids, policy_params, 
+            base_features, entity_ids, policy_params,
             policy_feature_indices, target_names
         )
-        
         reward = self.reward_loader.compute(predictions, None, context)
-        
-        # Store in history
+        try:
+            reward = float(reward)
+        except (TypeError, ValueError):
+            reward = float(reward) if hasattr(reward, '__float__') else 0.0
+        # Apply constraint penalties: each constraint { variable, type: 'max'|'min', value }
+        if constraints:
+            for c in constraints:
+                var = c.get('variable')
+                typ = c.get('type', 'max')
+                val = c.get('value')
+                if var not in predictions or val is None:
+                    continue
+                pv = predictions[var]
+                if typ == 'max' and pv > val:
+                    reward -= 1000.0 * (pv - val)
+                elif typ == 'min' and pv < val:
+                    reward -= 1000.0 * (val - pv)
         self.optimization_history.append({
             'params': policy_params.tolist(),
             'predictions': {k: float(v) for k, v in predictions.items()},
             'reward': float(reward)
         })
-        
         return -reward  # Negative because we minimize
     
     def optimize(
@@ -185,7 +194,8 @@ class PolicyOptimizer:
         initial_params: Optional[np.ndarray] = None,
         method: str = 'differential_evolution',
         max_iterations: int = 100,
-        context: Optional[Dict] = None
+        context: Optional[Dict] = None,
+        constraints: Optional[List[Dict]] = None
     ) -> Dict:
         """
         Find optimal policy parameters.
@@ -227,11 +237,12 @@ class PolicyOptimizer:
         if initial_params is None:
             initial_params = np.array([(b[0] + b[1]) / 2 for b in bounds])
         
-        # Optimize
+        constraints = constraints or []
         if method == 'differential_evolution':
             result = differential_evolution(
                 func=lambda p: self._objective_function(
-                    p, base_features, entity_ids, policy_feature_indices, target_names, context
+                    p, base_features, entity_ids, policy_feature_indices, target_names,
+                    context or {}, constraints
                 ),
                 bounds=bounds,
                 maxiter=max_iterations,
@@ -242,11 +253,11 @@ class PolicyOptimizer:
             optimal_params = result.x
             optimal_reward = -result.fun
             success = result.success
-            
-        else:  # Gradient-based methods
+        else:
             result = minimize(
                 fun=lambda p: self._objective_function(
-                    p, base_features, entity_ids, policy_feature_indices, target_names, context
+                    p, base_features, entity_ids, policy_feature_indices, target_names,
+                    context or {}, constraints
                 ),
                 x0=initial_params,
                 method=method,
