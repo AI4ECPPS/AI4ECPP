@@ -10,12 +10,13 @@ RUN apt-get update && apt-get install -y \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies (Policy Analyst + Policy DL Agent)
-# Use PyTorch CPU-only version - smaller & faster to install, avoids build timeout
+# Install Python dependencies (Policy Analyst only; Policy DL Agent needs PyTorch)
+# PyTorch commented out to speed up build / avoid timeout (large download ~200MB+)
+# To enable Policy DL Agent later: uncomment the torch line and merge with RUN below
 COPY server/scripts/requirements.txt /tmp/base-requirements.txt
-COPY server/scripts/policy_dl_agent/requirements.txt /tmp/dl-requirements.txt
-RUN pip3 install --break-system-packages torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip3 install --break-system-packages \
+# COPY server/scripts/policy_dl_agent/requirements.txt /tmp/dl-requirements.txt
+# RUN pip3 install --break-system-packages torch --index-url https://download.pytorch.org/whl/cpu && \
+RUN pip3 install --break-system-packages \
     -r /tmp/base-requirements.txt \
     scikit-learn scipy
 
