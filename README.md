@@ -1,6 +1,9 @@
 # AI4ECPP - AI Tools for Economics & Public Policy
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+**Author:** Yuhuan  
+**Contact:** yuhuan@uchicago.edu
+
+[![License](https://img.shields.io/badge/License-Personal%20%2F%20Educational%20%2F%20Non--commercial-red)](LICENSE)
 
 A web application designed to help students and researchers use AI more conveniently in economics and public policy research.
 
@@ -147,4 +150,8 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed for **personal, educational, and non-commercial use only**. Commercial use and redistribution are prohibited; any permitted sharing must include attribution and a link back to this repository. See the [LICENSE](LICENSE) file for full terms.
+
+---
+
+© 2026 Yuhuan. All rights reserved.

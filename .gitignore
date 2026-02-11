@@ -40,6 +40,9 @@ __pycache__/
 venv/
 .venv/
 
+# Docs (pushed to separate repo)
+docs-public/
+
 # Misc
 *.local
 .DS_Store

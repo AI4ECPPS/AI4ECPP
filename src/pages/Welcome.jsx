@@ -130,7 +130,7 @@ function Welcome() {
       {/* Footer */}
       <footer className="py-8 text-center">
         <p className="text-gray-500 text-sm">
-          Author: Yuhuan | Got feedback? I'm all ears! 👂
+          © 2026 Yuhuan. All rights reserved. | Author: Yuhuan | Got feedback? I'm all ears! 👂
         </p>
       </footer>
     </div>
