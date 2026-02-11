@@ -6,12 +6,18 @@ A web application designed to help students and researchers use AI more convenie
 
 ## Features
 
+The app offers **Student Mode** and **Professional Mode** with different tool sets.
+
 ### Core Tools
-- **Policy Memo Generator** - Generate structured policy memos with key points and actionable recommendations
-- **Paper Deconstructor** - Upload papers to extract strategies, assumptions, limitations, and summaries
-- **Empirical Copilot** - Generate R/Python/Stata code templates for econometric analysis
-- **Interview Trainer** - Practice Predoc technical interviews with AI-generated questions
-- **Offer Generator** - Generate humorous fake economics PhD offer emails
+- **Empirical Copilot** - Generate R/Python/Stata code from text or formula screenshots
+- **Policy Memo Generator** - Structured policy memos with key points and recommendations
+- **Paper Deconstructor** - Extract strategies, assumptions, and summaries from papers
+- **Interview Trainer** - Practice Predoc technical interviews with AI questions
+- **Cover Letter Editor** - AI-powered revision suggestions for cover letters
+- **Offer Generator** - Humorous fake offer letters for academic and industry positions
+- **Proof Writer** - Upload formula images and generate mathematical proofs or explanations
+- **Formula to LaTeX** - Convert formulas to LaTeX from images or text descriptions
+- **Code Snippet Library** - R/Stata code snippets for regression, DiD, RDD, and more
 
 ### Research Support
 - **Policy Analyst** - AI-assisted policy analysis with empirical tools
@@ -21,8 +27,12 @@ A web application designed to help students and researchers use AI more convenie
 
 ### Student Resources
 - **Topics** - Curated resources by field (Urban, Healthcare, Development, etc.)
-- **Knowledge Base** - Learning materials and external links
+- **Knowledge Base** - Essential concepts in economics, econometrics, and data analysis
 - **Career Path** - Guidance for economics and policy careers
+- **Find Professors** - Search economics professors by field and school
+- **Book List** - Recommended books in economics and public policy
+- **Outside Links** - Useful resources for economics and policy research
+- **Paper Replication** - Data and code for replicating AER and AEA journal papers
 
 ## Quick Start
 
@@ -58,24 +68,31 @@ Edit `server/.env` and add your credentials:
 PORT=3001
 OPENAI_API_KEY=sk-your-openai-api-key
 JWT_SECRET=your-random-secret-key
-FRONTEND_URL=http://localhost:5173
+FRONTEND_URL=http://localhost:1307
 ```
 
 Generate a secure JWT secret: `openssl rand -base64 32`
 
 ### Run Locally
 
-**Terminal 1 - Backend:**
+**Option A - One command (recommended):**
+```bash
+./start.sh
+```
+
+**Option B - Two terminals:**
+
+Terminal 1 - Backend:
 ```bash
 cd server && npm start
 ```
 
-**Terminal 2 - Frontend:**
+Terminal 2 - Frontend:
 ```bash
 npm run dev
 ```
 
-Visit `http://localhost:5173`
+Visit `http://localhost:1307`
 
 ## Deployment
 
@@ -122,6 +139,7 @@ AI4ECPP/
 | `PORT` | No | Server port (default: 3001) |
 | `FRONTEND_URL` | No | CORS origin for frontend |
 | `VITE_API_BASE_URL` | No | Backend API URL (frontend) |
+| `DATABASE_URL` | No | PostgreSQL connection string for user data and RAG persistence |
 
 ## Contributing
 
