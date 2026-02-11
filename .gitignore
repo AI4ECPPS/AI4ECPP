@@ -43,6 +43,9 @@ venv/
 # Docs (pushed to separate repo)
 docs-public/
 
+# Deployment (internal only)
+DEPLOYMENT.md
+
 # Misc
 *.local
 .DS_Store
