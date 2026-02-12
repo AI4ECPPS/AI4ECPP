@@ -18,7 +18,7 @@ const PYTHON_SCRIPT = path.join(__dirname, '..', 'scripts', 'empirical_analysis.
 const runPythonAnalysis = (inputData) => {
   return new Promise((resolve, reject) => {
     // Try different Python commands
-    const pythonCommands = ['python3', 'python']
+    const pythonCommands = ['/usr/bin/python3', 'python3', 'python']
     
     const tryPython = (index) => {
       if (index >= pythonCommands.length) {
