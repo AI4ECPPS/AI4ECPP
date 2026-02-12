@@ -4,6 +4,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import { initDb } from './db.js'
+import { createRateLimiter } from './middleware/security.js'
 import authRoutes from './routes/auth.js'
 import chatgptRoutes from './routes/chatgpt.js'
 import policyAnalystRoutes from './routes/policy-analyst.js'
@@ -19,13 +20,23 @@ const __dirname = path.dirname(__filename)
 const app = express()
 const PORT = process.env.PORT || 3001
 
+// Rate limit: 1000 requests per IP per 15 minutes
+const rateLimiter = createRateLimiter(
+  1000,
+  15 * 60 * 1000,
+  'You have reached the request limit (1000 requests per IP per 15 minutes). Please try again later.'
+)
+
 // Middleware
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:1307',
   credentials: true
 }))
-app.use(express.json({ limit: '50mb' })) // Increase limit for large CSV files
-app.use(express.urlencoded({ limit: '50mb', extended: true }))
+app.use(express.json({ limit: '1gb' })) // 1GB limit for file uploads (e.g. large CSV)
+app.use(express.urlencoded({ limit: '1gb', extended: true }))
+
+// Apply rate limiter to all API routes
+app.use('/api', rateLimiter)
 
 // Routes
 app.use('/api/auth', authRoutes)

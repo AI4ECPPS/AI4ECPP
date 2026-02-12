@@ -33,10 +33,16 @@ function RAGAssistant() {
     check()
   }, [])
 
+  const MAX_CONTENT_LENGTH = 500000
+
   const handleAddDocument = async (e) => {
     e.preventDefault()
     if (!title.trim() || !content.trim()) {
       setError('Please enter a title and content.')
+      return
+    }
+    if (content.length > MAX_CONTENT_LENGTH) {
+      setError(`Content is too long (max ${MAX_CONTENT_LENGTH.toLocaleString()} characters). Please shorten your document.`)
       return
     }
     setError('')
@@ -120,8 +126,12 @@ function RAGAssistant() {
                     onChange={(e) => setContent(e.target.value)}
                     placeholder="Paste document text here..."
                     rows={8}
+                    maxLength={MAX_CONTENT_LENGTH}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2"
                   />
+                  <p className="mt-1 text-sm text-gray-500">
+                    {content.length.toLocaleString()} / {MAX_CONTENT_LENGTH.toLocaleString()} characters
+                  </p>
                 </div>
                 <button
                   type="submit"

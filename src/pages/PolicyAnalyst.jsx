@@ -329,8 +329,9 @@ function PolicyAnalyst() {
       return
     }
 
-    if (file.size > 50 * 1024 * 1024) {
-      setError('File size should be less than 50MB')
+    const MAX_FILE_SIZE = 1 * 1024 * 1024 * 1024 // 1GB
+    if (file.size > MAX_FILE_SIZE) {
+      setError('File size must be less than 1GB. Please upload a smaller file.')
       return
     }
 
@@ -808,6 +809,12 @@ Generate the complete analysis code now.`
     
     if (!validExtensions.includes(ext) && ext !== '.r') {
       setError('Please upload a valid code file (.R, .py, .do, .stata, .txt)')
+      return
+    }
+
+    const MAX_FILE_SIZE = 1 * 1024 * 1024 * 1024 // 1GB
+    if (file.size > MAX_FILE_SIZE) {
+      setError('File size must be less than 1GB. Please upload a smaller file.')
       return
     }
     

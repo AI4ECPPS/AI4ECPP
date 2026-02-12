@@ -4,6 +4,7 @@ import Logo from '../components/Logo'
 import api from '../utils/api'
 
 const MAX_DOCUMENTS = 10
+const MAX_CONTENT_LENGTH = 500000
 
 function MyDocuments() {
   const navigate = useNavigate()
@@ -38,6 +39,10 @@ function MyDocuments() {
     }
     if (documents.length >= MAX_DOCUMENTS) {
       setError(`Maximum ${MAX_DOCUMENTS} documents. Delete one to add another.`)
+      return
+    }
+    if (content.length > MAX_CONTENT_LENGTH) {
+      setError(`Content is too long (max ${MAX_CONTENT_LENGTH.toLocaleString()} characters). Please shorten your document.`)
       return
     }
     setAdding(true)
@@ -141,9 +146,13 @@ function MyDocuments() {
                     onChange={(e) => setContent(e.target.value)}
                     placeholder="Paste document text here..."
                     rows={6}
+                    maxLength={MAX_CONTENT_LENGTH}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2"
                     disabled={atLimit}
                   />
+                  <p className="mt-1 text-sm text-gray-500">
+                    {content.length.toLocaleString()} / {MAX_CONTENT_LENGTH.toLocaleString()} characters
+                  </p>
                 </div>
                 {atLimit && (
                   <p className="text-sm text-amber-600">You have reached the maximum of {MAX_DOCUMENTS} documents. Delete one to add another.</p>

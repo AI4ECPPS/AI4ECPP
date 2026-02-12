@@ -323,34 +323,40 @@ export const validatePasswordFormat = (req, res, next) => {
 
 /**
  * 速率限制辅助函数（简单实现，生产环境建议使用express-rate-limit）
+ * @param {number} maxRequests - 时间窗口内最大请求数
+ * @param {number} windowMs - 时间窗口（毫秒）
+ * @param {string} [customMessage] - 超限时返回给客户端的提示信息
  */
-export const createRateLimiter = (maxRequests = 100, windowMs = 15 * 60 * 1000) => {
+export const createRateLimiter = (maxRequests = 100, windowMs = 15 * 60 * 1000, customMessage = null) => {
   const requests = new Map()
-  
+  const defaultMessage = `You have reached the request limit (${maxRequests} requests per IP per ${Math.round(windowMs / 60000)} minutes). Please try again later.`
+  const message = customMessage || defaultMessage
+
   return (req, res, next) => {
-    const ip = req.ip || req.connection.remoteAddress
+    const ip = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || 'unknown'
     const now = Date.now()
-    
+
     if (!requests.has(ip)) {
       requests.set(ip, { count: 1, resetTime: now + windowMs })
       return next()
     }
-    
+
     const record = requests.get(ip)
-    
+
     if (now > record.resetTime) {
       record.count = 1
       record.resetTime = now + windowMs
       return next()
     }
-    
+
     if (record.count >= maxRequests) {
       return res.status(429).json({
         error: 'Too many requests',
-        message: 'Please try again later'
+        message,
+        retryAfter: Math.ceil((record.resetTime - now) / 1000)
       })
     }
-    
+
     record.count++
     next()
   }
