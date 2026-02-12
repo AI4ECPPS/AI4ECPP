@@ -155,7 +155,7 @@ export const validateInput = (options = {}) => {
             if (value.length > maxLength) {
               return res.status(400).json({
                 error: 'Input too long',
-                message: `Field "${field}" exceeds maximum length of ${maxLength} characters`
+                message: `Input exceeds maximum length of ${maxLength} characters`
               })
             }
             

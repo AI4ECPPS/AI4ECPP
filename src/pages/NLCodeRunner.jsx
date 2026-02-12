@@ -56,9 +56,9 @@ function NLCodeRunner() {
   const handleFileUpload = (e) => {
     const f = e.target.files?.[0]
     if (!f || !f.name.endsWith('.csv')) return
-    const MAX_FILE_SIZE = 1 * 1024 * 1024 * 1024 // 1GB
+    const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
     if (f.size > MAX_FILE_SIZE) {
-      alert('File size must be less than 1GB. Please upload a smaller file.')
+      alert('File size must be less than 50MB. Please upload a smaller file.')
       return
     }
     const reader = new FileReader()

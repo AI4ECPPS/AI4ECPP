@@ -32,8 +32,8 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:1307',
   credentials: true
 }))
-app.use(express.json({ limit: '1gb' })) // 1GB limit for file uploads (e.g. large CSV)
-app.use(express.urlencoded({ limit: '1gb', extended: true }))
+app.use(express.json({ limit: '50mb' })) // 50MB limit for file uploads (e.g. CSV)
+app.use(express.urlencoded({ limit: '50mb', extended: true }))
 
 // Apply rate limiter to all API routes
 app.use('/api', rateLimiter)
