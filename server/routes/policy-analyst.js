@@ -111,7 +111,7 @@ router.post('/analyze', async (req, res) => {
     }
     
     // Validate based on analysis type
-    const validAnalysisTypes = ['descriptive', 'regression', 'iv', 'did', 'timeseries']
+    const validAnalysisTypes = ['descriptive', 'regression', 'fixed_effects', 'logit', 'probit', 'iv', 'did', 'timeseries', 'adf_test', 'acf_pacf', 'arima', 'var', 'vecm']
     const selectedAnalysisType = validAnalysisTypes.includes(analysisType) ? analysisType : 'regression'
     
     // Type-specific validation
@@ -144,6 +144,13 @@ router.post('/analyze', async (req, res) => {
           message: 'Please select outcome, treatment, and time variables.'
         })
       }
+    } else if (selectedAnalysisType === 'fixed_effects') {
+      if (!dependentVar || !independentVars || independentVars.length === 0) {
+        return res.status(400).json({
+          error: 'Missing fixed effects variables',
+          message: 'Please select dependent variable and at least one independent variable. Use "Use row index" if your CSV has no ID column.'
+        })
+      }
     } else if (selectedAnalysisType === 'timeseries') {
       const { timeSeriesVar } = req.body
       if (!timeSeriesVar) {
@@ -170,7 +177,12 @@ router.post('/analyze', async (req, res) => {
       timeVar, 
       controlVars,
       timeSeriesVar,
-      dateVar
+      dateVar,
+      entityVar,
+      timeFeVar,
+      feType,
+      arimaP, arimaD, arimaQ,
+      varVariables, varLags, vecmRank
     } = req.body
 
     // Prepare input for Python script
@@ -189,9 +201,15 @@ router.post('/analyze', async (req, res) => {
       treatmentVar,
       timeVar,
       controlVars,
+      // Fixed effects
+      entityVar,
+      timeFeVar,
+      feType,
       // Time series specific
       timeSeriesVar,
       dateVar,
+      arimaP, arimaD, arimaQ,
+      varVariables, varLags, vecmRank,
       // General
       language: selectedLanguage,
       additionalRequest: additionalRequest || ''

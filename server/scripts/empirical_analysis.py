@@ -2163,6 +2163,10 @@ def main():
             entity_var = params.get('entityVar')
             time_fe_var = params.get('timeFeVar')
             fe_type = params.get('feType', 'entity')
+            # When no ID column: use row index (1, 2, 3...) as entity ID
+            if not entity_var or entity_var == '__row_index__':
+                df['_entity_id'] = np.arange(1, len(df) + 1, dtype=np.int64)
+                entity_var = '_entity_id'
             result = perform_fixed_effects(df, dependent_var, independent_vars, entity_var, time_fe_var, fe_type, language)
             
         elif analysis_type == 'adf_test':

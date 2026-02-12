@@ -407,7 +407,7 @@ function PolicyAnalyst() {
     switch (analysisType) {
       case 'descriptive': return selectedVars.length > 0
       case 'regression': return dependentVar && independentVars.length > 0
-      case 'fixed_effects': return dependentVar && independentVars.length > 0 && entityVar
+      case 'fixed_effects': return dependentVar && independentVars.length > 0
       case 'logit': return dependentVar && independentVars.length > 0
       case 'probit': return dependentVar && independentVars.length > 0
       case 'iv': return dependentVar && endogenousVar && instrumentVars.length > 0
@@ -550,8 +550,11 @@ Generate the complete analysis code now.`
     switch (type) {
       case 'regression':
         return { ...base, dependentVar: config.dependentVar || dependentVar, independentVars: config.independentVars || independentVars }
-      case 'fixed_effects':
-        return { ...base, dependentVar: config.dependentVar || dependentVar, independentVars: config.independentVars || independentVars, entityVar: config.entityVar || entityVar, timeFeVar: config.timeFeVar || timeFeVar, feType: config.feType || feType }
+      case 'fixed_effects': {
+        const ev = config.entityVar ?? entityVar
+        const effectiveEntityVar = (!ev || ev === '__row_index__') ? '__row_index__' : ev
+        return { ...base, dependentVar: config.dependentVar || dependentVar, independentVars: config.independentVars || independentVars, entityVar: effectiveEntityVar, timeFeVar: config.timeFeVar || timeFeVar, feType: config.feType || feType }
+      }
       case 'logit':
         return { ...base, dependentVar: config.dependentVar || dependentVar, independentVars: config.independentVars || independentVars }
       case 'probit':
@@ -1604,8 +1607,10 @@ Make the code realistic and complete. Use standard packages (reghdfe, estout for
                 <label className="block text-sm font-medium text-gray-700 mb-2">Entity ID Variable (e.g., firm_id, country)</label>
                 <select value={entityVar} onChange={(e) => setEntityVar(e.target.value)} className="w-full px-4 py-2 border rounded-lg">
                   <option value="">Select...</option>
+                  <option value="__row_index__">Use row index (1, 2, 3...)</option>
                   {cols.filter(c => c !== dependentVar && !independentVars.includes(c)).map(col => <option key={col} value={col}>{col}</option>)}
                 </select>
+                <p className="text-xs text-gray-500 mt-1">If your CSV has no ID column, select &quot;Use row index&quot; to use row numbers as entity ID.</p>
               </div>
               {(feType === 'time' || feType === 'twoway') && (
                 <div>
