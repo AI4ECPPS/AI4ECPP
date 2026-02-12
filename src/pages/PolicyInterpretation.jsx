@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import Logo from '../components/Logo'
 import { callChatGPT } from '../utils/api'
 
+const REPORT_GENERATOR_DISABLED = true // Report Generator is under development
+
 function PolicyInterpretation() {
   const navigate = useNavigate()
   const fileInputRef = useRef(null)
@@ -528,15 +530,21 @@ Generate the complete professional report now.`
               <div className="text-sm opacity-80">Analyze regression results & get interpretation</div>
             </button>
             <button
-              onClick={() => { setMode('report'); setInterpretation(null); }}
+              onClick={() => {
+                if (REPORT_GENERATOR_DISABLED) return
+                setMode('report')
+                setInterpretation(null)
+              }}
               className={`flex-1 px-6 py-4 rounded-lg font-semibold transition ${
-                mode === 'report'
-                  ? 'bg-violet-600 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                REPORT_GENERATOR_DISABLED
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : mode === 'report'
+                    ? 'bg-violet-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
               <div className="text-lg mb-1">📄 Report Generator</div>
-              <div className="text-sm opacity-80">Generate professional reports for government/private sector</div>
+              <div className="text-sm opacity-80">{REPORT_GENERATOR_DISABLED ? 'Currently under development' : 'Generate professional reports for government/private sector'}</div>
             </button>
           </div>
         </div>

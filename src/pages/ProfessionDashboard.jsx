@@ -174,8 +174,6 @@ function ProfessionDashboard({ isAuthenticated, setIsAuthenticated, isGuest = fa
       description: 'Upload your regression results and get automatic interpretation: result explanation, identification threats, policy implications, and external validity discussion.',
       icon: '📝',
       color: 'from-violet-500 to-purple-600',
-      disabled: true,
-      disabledMessage: 'Currently under development',
     },
     {
       id: 'policy-dl-agent',
