@@ -137,12 +137,12 @@ function Dashboard({ isAuthenticated, setIsAuthenticated, isGuest = false }) {
   ]
 
   const resourceTools = [
-    { id: 'find-professors', title: 'Find Professors', description: 'Search for economics professors by name or research field and school', icon: '👨‍🏫', color: 'from-teal-500 to-cyan-500' },
-    { id: 'book-list', title: 'Book List', description: 'Recommended books in economics and public policy by professors', icon: '📚', color: 'from-purple-500 to-pink-500' },
+    { id: 'outside-links', title: 'Outside Links', description: 'Useful resources and links for economics and public policy research', icon: '🔗', color: 'from-indigo-500 to-blue-500' },
     { id: 'topics', title: 'Topics', description: 'Explore research topics in Public Policy and Applied Economics with resources and links', icon: '📑', color: 'from-rose-500 to-pink-500' },
     { id: 'knowledge', title: 'Knowledge Base', description: 'Essential knowledge points and key concepts in economics, econometrics, and data analysis', icon: '🧠', color: 'from-emerald-500 to-teal-500' },
     { id: 'career-path', title: 'Career Path', description: 'Explore career directions and opportunities for Public Policy graduates', icon: '🚀', color: 'from-blue-600 to-indigo-600' },
-    { id: 'outside-links', title: 'Outside Links', description: 'Useful resources and links for economics and public policy research', icon: '🔗', color: 'from-indigo-500 to-blue-500' },
+    { id: 'find-professors', title: 'Find Professors', description: 'Search for economics professors by name or research field and school', icon: '👨‍🏫', color: 'from-teal-500 to-cyan-500' },
+    { id: 'book-list', title: 'Book List', description: 'Recommended books in economics and public policy by professors', icon: '📚', color: 'from-purple-500 to-pink-500' },
     { id: 'paper-replication', title: 'Paper Replication', description: 'Official data and code repository for replicating AER and other AEA journal papers', icon: '📄', color: 'from-orange-500 to-red-500' },
   ]
 
