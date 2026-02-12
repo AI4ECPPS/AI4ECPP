@@ -62,6 +62,7 @@ function PolicyAnalyst() {
   const [generatedCode, setGeneratedCode] = useState('')
   const [plots, setPlots] = useState([])
   const [interpretation, setInterpretation] = useState('')
+  const [plotModal, setPlotModal] = useState(null) // { image, title } for zoom modal
 
   // ========== PIPELINE MODE STATES ==========
   const [pipelineSteps, setPipelineSteps] = useState([])
@@ -384,6 +385,13 @@ function PolicyAnalyst() {
     setGeneratedCode('')
     setPlots([])
     setInterpretation('')
+  }
+
+  const handleDownloadPlot = (imageBase64, title) => {
+    const link = document.createElement('a')
+    link.href = `data:image/png;base64,${imageBase64}`
+    link.download = (title || 'plot').replace(/[^a-zA-Z0-9-_]/g, '_') + '.png'
+    link.click()
   }
 
   // Handle variable selections
@@ -1452,7 +1460,21 @@ Make the code realistic and complete. Use standard packages (reghdfe, estout for
           <div className="bg-white rounded-lg shadow p-4">
             <h4 className="font-semibold text-gray-700 mb-2">Plots</h4>
             {step.plots.map((plot, idx) => (
-              <img key={idx} src={`data:image/png;base64,${plot.image}`} alt={plot.title} className="w-full rounded mb-2" />
+              <div key={idx} className="relative group mb-4">
+                <img
+                  src={`data:image/png;base64,${plot.image}`}
+                  alt={plot.title}
+                  className="w-full rounded cursor-pointer hover:opacity-90 transition"
+                  onClick={() => setPlotModal({ image: plot.image, title: plot.title })}
+                />
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDownloadPlot(plot.image, plot.title); }}
+                  className="absolute top-2 right-2 px-3 py-1.5 bg-gray-800 text-white text-sm rounded opacity-0 group-hover:opacity-100 transition"
+                >
+                  Download
+                </button>
+                <p className="text-xs text-gray-500 mt-1">Click to zoom</p>
+              </div>
             ))}
           </div>
         )}
@@ -2008,7 +2030,21 @@ Make the code realistic and complete. Use standard packages (reghdfe, estout for
                   <div className="bg-white rounded-lg shadow p-6">
                     <h3 className="text-lg font-bold text-gray-800 mb-4">📊 Plots</h3>
                     {plots.map((plot, idx) => (
-                      <img key={idx} src={`data:image/png;base64,${plot.image}`} alt={plot.title} className="w-full rounded mb-2" />
+                      <div key={idx} className="relative group mb-4">
+                        <img
+                          src={`data:image/png;base64,${plot.image}`}
+                          alt={plot.title}
+                          className="w-full rounded cursor-pointer hover:opacity-90 transition"
+                          onClick={() => setPlotModal({ image: plot.image, title: plot.title })}
+                        />
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDownloadPlot(plot.image, plot.title); }}
+                          className="absolute top-2 right-2 px-3 py-1.5 bg-gray-800 text-white text-sm rounded opacity-0 group-hover:opacity-100 transition"
+                        >
+                          Download
+                        </button>
+                        <p className="text-xs text-gray-500 mt-1">Click to zoom</p>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -2373,432 +2409,52 @@ Or: Perform difference-in-differences analysis where ${columns[0] || 'outcome'} 
             )}
           </>
         ) : mode === 'robustness' ? (
-          // ========== ROBUSTNESS MODE UI ==========
-          <div className="grid lg:grid-cols-5 gap-6">
-            {/* Left Column - Input (2 cols) */}
-            <div className="lg:col-span-2 space-y-4">
-              
-              {/* Input Mode Toggle */}
-              <div className="bg-white rounded-lg shadow overflow-hidden">
-                <div className="flex">
-                  <button
-                    onClick={() => setRobustInputMode('code')}
-                    className={`flex-1 py-3 px-4 text-center font-semibold text-sm transition ${
-                      robustInputMode === 'code'
-                        ? 'bg-teal-600 text-white'
-                        : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                    }`}
-                  >
-                    📄 Upload Code
-                  </button>
-                  <button
-                    onClick={() => setRobustInputMode('manual')}
-                    className={`flex-1 py-3 px-4 text-center font-semibold text-sm transition ${
-                      robustInputMode === 'manual'
-                        ? 'bg-teal-600 text-white'
-                        : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                    }`}
-                  >
-                    ✏️ Manual Input
-                  </button>
-                </div>
-              </div>
-
-              {/* Code Upload Mode */}
-              {robustInputMode === 'code' && (
-                <>
-                  <div className="bg-white rounded-lg shadow p-5">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4">📄 Original Regression Code</h3>
-                    
-                    <div className="mb-4">
-                      <input
-                        type="file"
-                        ref={robustCodeFileRef}
-                        onChange={handleRobustCodeFileUpload}
-                        accept=".r,.R,.py,.do,.stata,.txt"
-                        className="hidden"
-                        id="robust-code-file-upload"
-                      />
-                      <label
-                        htmlFor="robust-code-file-upload"
-                        className="inline-block px-4 py-2 bg-teal-600 text-white rounded-lg cursor-pointer hover:bg-teal-700 transition text-sm"
-                      >
-                        Upload Code File
-                      </label>
-                      {robustCodeFile && (
-                        <span className="ml-3 text-sm text-gray-600">{robustCodeFile.name}</span>
-                      )}
-                    </div>
-                    
-                    <div className="text-sm text-gray-500 mb-2">Or paste your code directly:</div>
-                    <textarea
-                      value={robustOriginalCode}
-                      onChange={(e) => setRobustOriginalCode(e.target.value)}
-                      placeholder={`Paste your regression code here...
-
-Example (Stata):
-reghdfe log_wage treatment age education, absorb(state year) cluster(state)
-
-Example (R):
-model <- feols(log_wage ~ treatment + age + education | state + year, data = df, cluster = ~state)
-
-Example (Python):
-model = PanelOLS.from_formula('log_wage ~ treatment + age + education + EntityEffects + TimeEffects', data=df)`}
-                      className="w-full h-40 px-3 py-2 border rounded-lg text-sm font-mono focus:ring-2 focus:ring-teal-500 resize-none"
-                    />
-                  </div>
-
-                  {/* Data Upload (Optional) */}
-                  {!dataFile && (
-                    <div className="bg-white rounded-lg shadow p-5">
-                      <h3 className="text-lg font-bold text-gray-800 mb-3">📊 Data File (Optional)</h3>
-                      <p className="text-sm text-gray-500 mb-3">
-                        Upload your CSV data to help generate more accurate variable names.
-                      </p>
-                      <input
-                        type="file"
-                        onChange={handleFileUpload}
-                        accept=".csv"
-                        className="text-sm"
-                      />
-                    </div>
-                  )}
-
-                  {/* Show data columns if available */}
-                  {columns.length > 0 && (
-                    <div className="bg-white rounded-lg shadow p-5">
-                      <h3 className="text-sm font-bold text-gray-700 mb-2">Available Variables ({columns.length})</h3>
-                      <div className="flex flex-wrap gap-1">
-                        {columns.slice(0, 15).map((col, idx) => (
-                          <span key={idx} className="px-2 py-0.5 bg-teal-100 text-teal-700 rounded text-xs">{col}</span>
-                        ))}
-                        {columns.length > 15 && <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs">+{columns.length - 15} more</span>}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Language & Generate */}
-                  <div className="bg-white rounded-lg shadow p-5">
-                    <div className="flex gap-2 mb-4">
-                      <button onClick={() => setRobustCodeLang('stata')}
-                        className={`flex-1 px-3 py-2 rounded-lg font-medium transition text-sm ${robustCodeLang === 'stata' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
-                        Stata
-                      </button>
-                      <button onClick={() => setRobustCodeLang('r')}
-                        className={`flex-1 px-3 py-2 rounded-lg font-medium transition text-sm ${robustCodeLang === 'r' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
-                        R
-                      </button>
-                      <button onClick={() => setRobustCodeLang('python')}
-                        className={`flex-1 px-3 py-2 rounded-lg font-medium transition text-sm ${robustCodeLang === 'python' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
-                        Python
-                      </button>
-                    </div>
-
-                    {error && <div className="mb-4 bg-red-50 text-red-700 p-3 rounded-lg text-sm">{error}</div>}
-                    
-                    <div className="flex gap-3">
-                      <button 
-                        onClick={handleGenerateRobustnessFromCode} 
-                        disabled={loading || !robustOriginalCode.trim()}
-                        className="flex-1 px-4 py-3 bg-teal-600 text-white rounded-lg font-semibold hover:bg-teal-700 transition disabled:opacity-50">
-                        {loading ? '⏳ Analyzing...' : '🧪 Generate Checks'}
-                      </button>
-                      <button 
-                        onClick={() => { setRobustOriginalCode(''); setRobustCodeFile(null); setRobustResult(null); setError(''); if(robustCodeFileRef.current) robustCodeFileRef.current.value = ''; }}
-                        className="px-4 py-3 bg-gray-200 rounded-lg font-medium hover:bg-gray-300">
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* Manual Input Mode */}
-              {robustInputMode === 'manual' && (
-                <>
-                  <div className="bg-white rounded-lg shadow p-5">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4">📊 Main Specification</h3>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Dependent Variable (Y) *</label>
-                        <input type="text" value={robustDepVar} onChange={(e) => setRobustDepVar(e.target.value)}
-                          placeholder="e.g., log_wage, employment" className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-teal-500" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Main Independent Variable(s) *</label>
-                        <input type="text" value={robustIndepVars} onChange={(e) => setRobustIndepVars(e.target.value)}
-                          placeholder="e.g., treatment, min_wage" className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-teal-500" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Control Variables</label>
-                        <input type="text" value={robustControlVars} onChange={(e) => setRobustControlVars(e.target.value)}
-                          placeholder="e.g., age, education, experience" className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-teal-500" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Fixed Effects</label>
-                        <input type="text" value={robustFixedEffects} onChange={(e) => setRobustFixedEffects(e.target.value)}
-                          placeholder="e.g., state, year" className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-teal-500" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Cluster Variable</label>
-                        <input type="text" value={robustClusterVar} onChange={(e) => setRobustClusterVar(e.target.value)}
-                          placeholder="e.g., state, firm_id" className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-teal-500" />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white rounded-lg shadow p-5">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4">🛠️ Method & Data</h3>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Method</label>
-                        <div className="grid grid-cols-3 gap-2">
-                          {robustMethods.map((m) => (
-                            <button key={m.id} onClick={() => setRobustMethod(m.id)}
-                              className={`px-3 py-2 rounded-lg text-xs font-medium transition ${robustMethod === m.id ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                              {m.name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Data Description (Optional)</label>
-                        <textarea value={robustDataDesc} onChange={(e) => setRobustDataDesc(e.target.value)}
-                          placeholder="e.g., Panel data 2000-2020, 50 states, quarterly..."
-                          className="w-full px-3 py-2 border rounded-lg text-sm h-20 resize-none focus:ring-2 focus:ring-teal-500" />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white rounded-lg shadow p-5">
-                    <div className="flex gap-2 mb-4">
-                      <button onClick={() => setRobustCodeLang('stata')}
-                        className={`flex-1 px-3 py-2 rounded-lg font-medium transition text-sm ${robustCodeLang === 'stata' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
-                        Stata
-                      </button>
-                      <button onClick={() => setRobustCodeLang('r')}
-                        className={`flex-1 px-3 py-2 rounded-lg font-medium transition text-sm ${robustCodeLang === 'r' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
-                        R
-                      </button>
-                      <button onClick={() => setRobustCodeLang('python')}
-                        className={`flex-1 px-3 py-2 rounded-lg font-medium transition text-sm ${robustCodeLang === 'python' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
-                        Python
-                      </button>
-                    </div>
-                    {error && <div className="mb-4 bg-red-50 text-red-700 p-3 rounded-lg text-sm">{error}</div>}
-                    <div className="flex gap-3">
-                      <button onClick={handleGenerateRobustness} disabled={loading || !robustDepVar.trim() || !robustIndepVars.trim()}
-                        className="flex-1 px-4 py-3 bg-teal-600 text-white rounded-lg font-semibold hover:bg-teal-700 transition disabled:opacity-50">
-                        {loading ? '⏳ Generating...' : '🧪 Generate Checks'}
-                      </button>
-                      <button onClick={() => { setRobustDepVar(''); setRobustIndepVars(''); setRobustControlVars(''); setRobustFixedEffects(''); setRobustClusterVar(''); setRobustDataDesc(''); setRobustResult(null); setError(''); }}
-                        className="px-4 py-3 bg-gray-200 rounded-lg font-medium hover:bg-gray-300">
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* Right Column - Results (3 cols) */}
-            <div className="lg:col-span-3">
-              {robustResult ? (
-                <div className="bg-white rounded-lg shadow">
-                  <div className="border-b overflow-x-auto">
-                    <div className="flex">
-                      {robustTabs.map((tab) => (
-                        <button key={tab.id} onClick={() => setRobustActiveTab(tab.id)}
-                          className={`px-4 py-3 text-sm font-medium whitespace-nowrap transition ${robustActiveTab === tab.id ? 'border-b-2 border-teal-500 text-teal-600' : 'text-gray-500 hover:text-gray-700'}`}>
-                          {tab.icon} {tab.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="p-5 max-h-[65vh] overflow-y-auto">
-                    {robustActiveTab === 'suggestions' && (
-                      <div className="space-y-4">
-                        {/* Code Analysis Results (for code upload mode) */}
-                        {robustResult.codeAnalysis && (
-                          <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-200">
-                            <h4 className="font-bold text-indigo-800 mb-3">🔍 Detected Specification</h4>
-                            <div className="grid grid-cols-2 gap-3 text-sm">
-                              <div>
-                                <span className="text-indigo-600 font-medium">Dependent Variable:</span>
-                                <div className="text-indigo-900">{robustResult.codeAnalysis.dependentVar || 'N/A'}</div>
-                              </div>
-                              <div>
-                                <span className="text-indigo-600 font-medium">Main Independent Var:</span>
-                                <div className="text-indigo-900">{robustResult.codeAnalysis.mainIndepVar || 'N/A'}</div>
-                              </div>
-                              <div>
-                                <span className="text-indigo-600 font-medium">Controls:</span>
-                                <div className="text-indigo-900">{robustResult.codeAnalysis.controls || 'None'}</div>
-                              </div>
-                              <div>
-                                <span className="text-indigo-600 font-medium">Fixed Effects:</span>
-                                <div className="text-indigo-900">{robustResult.codeAnalysis.fixedEffects || 'None'}</div>
-                              </div>
-                              <div>
-                                <span className="text-indigo-600 font-medium">Clustering:</span>
-                                <div className="text-indigo-900">{robustResult.codeAnalysis.clustering || 'None'}</div>
-                              </div>
-                              <div>
-                                <span className="text-indigo-600 font-medium">Method:</span>
-                                <div className="text-indigo-900">{robustResult.codeAnalysis.method || 'Unknown'}</div>
-                              </div>
-                            </div>
-                            {robustResult.codeAnalysis.summary && (
-                              <div className="mt-3 pt-3 border-t border-indigo-200">
-                                <span className="text-indigo-600 font-medium">Summary:</span>
-                                <p className="text-indigo-800 text-sm mt-1">{robustResult.codeAnalysis.summary}</p>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        <div className="bg-teal-50 p-4 rounded-lg">
-                          <h4 className="font-bold text-teal-800 mb-2">Strategy Overview</h4>
-                          <p className="text-teal-700">{robustResult.summary}</p>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="p-3 bg-blue-50 rounded-lg">
-                            <div className="text-2xl font-bold text-blue-600">{robustResult.alternativeSpecs?.length || 0}</div>
-                            <div className="text-sm text-blue-700">Alt. Specifications</div>
-                          </div>
-                          <div className="p-3 bg-purple-50 rounded-lg">
-                            <div className="text-2xl font-bold text-purple-600">{robustResult.subsampleTests?.length || 0}</div>
-                            <div className="text-sm text-purple-700">Subsample Tests</div>
-                          </div>
-                          <div className="p-3 bg-orange-50 rounded-lg">
-                            <div className="text-2xl font-bold text-orange-600">{robustResult.placeboTests?.length || 0}</div>
-                            <div className="text-sm text-orange-700">Placebo Tests</div>
-                          </div>
-                          <div className="p-3 bg-green-50 rounded-lg">
-                            <div className="text-2xl font-bold text-green-600">{robustResult.clusteringAlternatives?.length || 0}</div>
-                            <div className="text-sm text-green-700">Clustering Options</div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {robustActiveTab === 'altspecs' && robustResult.alternativeSpecs?.map((spec, idx) => (
-                      <div key={idx} className="border rounded-lg p-4 mb-3">
-                        <div className="font-medium text-gray-800 mb-1">{idx + 1}. {spec.name}</div>
-                        <p className="text-sm text-gray-600 mb-2">{spec.description}</p>
-                        {spec.changes && <div className="text-xs text-teal-600 mb-2">Changes: {spec.changes}</div>}
-                        <div className="mt-2">
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-xs font-medium text-gray-500 uppercase">{robustCodeLang} Code</span>
-                            <button onClick={() => copyToClipboard(robustCodeLang === 'stata' ? spec.stataCode : robustCodeLang === 'r' ? spec.rCode : spec.pythonCode)} className="text-xs text-teal-600">Copy</button>
-                          </div>
-                          <pre className="bg-gray-900 text-green-400 p-3 rounded-lg text-xs overflow-x-auto max-h-40">
-                            {robustCodeLang === 'stata' ? spec.stataCode : robustCodeLang === 'r' ? spec.rCode : spec.pythonCode}
-                          </pre>
-                        </div>
-                      </div>
-                    ))}
-
-                    {robustActiveTab === 'subsample' && robustResult.subsampleTests?.map((test, idx) => (
-                      <div key={idx} className="border rounded-lg p-4 mb-3">
-                        <div className="font-medium text-gray-800 mb-1">{idx + 1}. {test.name}</div>
-                        <p className="text-sm text-gray-600 mb-2">{test.description}</p>
-                        <div className="mt-2">
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-xs font-medium text-gray-500 uppercase">{robustCodeLang} Code</span>
-                            <button onClick={() => copyToClipboard(robustCodeLang === 'stata' ? test.stataCode : robustCodeLang === 'r' ? test.rCode : test.pythonCode)} className="text-xs text-teal-600">Copy</button>
-                          </div>
-                          <pre className="bg-gray-900 text-green-400 p-3 rounded-lg text-xs overflow-x-auto max-h-40">
-                            {robustCodeLang === 'stata' ? test.stataCode : robustCodeLang === 'r' ? test.rCode : test.pythonCode}
-                          </pre>
-                        </div>
-                      </div>
-                    ))}
-
-                    {robustActiveTab === 'placebo' && robustResult.placeboTests?.map((test, idx) => (
-                      <div key={idx} className="border rounded-lg p-4 mb-3">
-                        <div className="font-medium text-gray-800 mb-1">{idx + 1}. {test.name}</div>
-                        <p className="text-sm text-gray-600 mb-2">{test.description}</p>
-                        <div className="mt-2">
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-xs font-medium text-gray-500 uppercase">{robustCodeLang} Code</span>
-                            <button onClick={() => copyToClipboard(robustCodeLang === 'stata' ? test.stataCode : robustCodeLang === 'r' ? test.rCode : test.pythonCode)} className="text-xs text-teal-600">Copy</button>
-                          </div>
-                          <pre className="bg-gray-900 text-green-400 p-3 rounded-lg text-xs overflow-x-auto max-h-40">
-                            {robustCodeLang === 'stata' ? test.stataCode : robustCodeLang === 'r' ? test.rCode : test.pythonCode}
-                          </pre>
-                        </div>
-                      </div>
-                    ))}
-
-                    {robustActiveTab === 'clustering' && robustResult.clusteringAlternatives?.map((cluster, idx) => (
-                      <div key={idx} className="border rounded-lg p-4 mb-3">
-                        <div className="font-medium text-gray-800 mb-1">{idx + 1}. {cluster.name}</div>
-                        <p className="text-sm text-gray-600 mb-2">{cluster.rationale}</p>
-                        <div className="mt-2">
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-xs font-medium text-gray-500 uppercase">{robustCodeLang} Code</span>
-                            <button onClick={() => copyToClipboard(robustCodeLang === 'stata' ? cluster.stataCode : robustCodeLang === 'r' ? cluster.rCode : cluster.pythonCode)} className="text-xs text-teal-600">Copy</button>
-                          </div>
-                          <pre className="bg-gray-900 text-green-400 p-3 rounded-lg text-xs overflow-x-auto max-h-40">
-                            {robustCodeLang === 'stata' ? cluster.stataCode : robustCodeLang === 'r' ? cluster.rCode : cluster.pythonCode}
-                          </pre>
-                        </div>
-                      </div>
-                    ))}
-
-                    {robustActiveTab === 'export' && (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-3 gap-3">
-                          <button onClick={() => downloadRobustCode('stata')} className="p-4 bg-blue-50 rounded-lg text-center hover:bg-blue-100 transition">
-                            <div className="text-2xl mb-1">📄</div>
-                            <div className="font-medium text-blue-700">Stata (.do)</div>
-                          </button>
-                          <button onClick={() => downloadRobustCode('r')} className="p-4 bg-green-50 rounded-lg text-center hover:bg-green-100 transition">
-                            <div className="text-2xl mb-1">📄</div>
-                            <div className="font-medium text-green-700">R (.R)</div>
-                          </button>
-                          <button onClick={() => downloadRobustCode('python')} className="p-4 bg-yellow-50 rounded-lg text-center hover:bg-yellow-100 transition">
-                            <div className="text-2xl mb-1">📄</div>
-                            <div className="font-medium text-yellow-700">Python (.py)</div>
-                          </button>
-                        </div>
-                        {robustResult.latexTableTemplate && (
-                          <div>
-                            <div className="flex justify-between items-center mb-2">
-                              <h5 className="font-medium text-gray-700">LaTeX Table Template</h5>
-                              <button onClick={() => copyToClipboard(robustResult.latexTableTemplate)} className="text-sm text-teal-600">Copy</button>
-                            </div>
-                            <pre className="bg-gray-900 text-yellow-300 p-3 rounded-lg text-xs overflow-x-auto max-h-48">
-                              {robustResult.latexTableTemplate}
-                            </pre>
-                          </div>
-                        )}
-                        <div>
-                          <div className="flex justify-between items-center mb-2">
-                            <h5 className="font-medium text-gray-700">All {robustCodeLang.toUpperCase()} Code</h5>
-                            <button onClick={() => copyToClipboard(getAllRobustCode(robustCodeLang))} className="text-sm text-teal-600">Copy All</button>
-                          </div>
-                          <pre className="bg-gray-900 text-green-400 p-3 rounded-lg text-xs overflow-x-auto max-h-64">
-                            {getAllRobustCode(robustCodeLang)}
-                          </pre>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-white rounded-lg shadow p-12 text-center">
-                  <div className="text-6xl mb-4">🧪</div>
-                  <h3 className="text-xl font-semibold text-gray-700 mb-2">Robustness Checks Will Appear Here</h3>
-                  <p className="text-gray-500">Enter your main specification and click "Generate Checks" to get started.</p>
-                </div>
-              )}
-            </div>
+          // ========== ROBUSTNESS MODE - TO DO ==========
+          <div className="bg-white rounded-lg shadow p-12 text-center">
+            <div className="text-6xl mb-4">🚧</div>
+            <h3 className="text-xl font-semibold text-gray-700 mb-2">Robustness Generator — Coming Soon</h3>
+            <p className="text-gray-500 max-w-md mx-auto">
+              This feature is under development. It will allow you to generate appendix-ready robustness checks: alternative specifications, subsample tests, placebo tests, and different clustering options.
+            </p>
           </div>
         ) : null}
       </main>
+
+      {/* Plot zoom modal */}
+      {plotModal && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          onClick={() => setPlotModal(null)}
+        >
+          <div
+            className="bg-white rounded-lg max-w-4xl max-h-[90vh] overflow-auto p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-2">
+              <h4 className="font-semibold text-gray-800">{plotModal.title}</h4>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleDownloadPlot(plotModal.image, plotModal.title)}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700"
+                >
+                  Download
+                </button>
+                <button
+                  onClick={() => setPlotModal(null)}
+                  className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <img
+              src={`data:image/png;base64,${plotModal.image}`}
+              alt={plotModal.title}
+              className="max-w-full"
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -310,7 +310,9 @@ function Dashboard({ isAuthenticated, setIsAuthenticated, isGuest = false }) {
       {/* Footer */}
       <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-center">
         <p className="text-gray-600 text-sm">
-          © 2026 Yuhuan. All rights reserved. | Author: Yuhuan | Got feedback? I'm all ears! 👂
+          Author: Yuhuan | Made with courage and curiosity. Limited ability, but keep improving — thank you so much for your encouragement and feedback! ❤️
+          <br />
+          © 2026 Yuhuan. All rights reserved.
         </p>
       </footer>
 

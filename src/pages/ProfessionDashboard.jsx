@@ -127,18 +127,18 @@ function ProfessionDashboard({ isAuthenticated, setIsAuthenticated, isGuest = fa
   // 专业模式的工具列表 - 实证分析AI助手
   const tools = [
     {
-      id: 'policy-analyst',
-      title: 'Empirical Analyst AI',
-      description: 'Upload your data to perform empirical analysis, build analysis pipelines, and generate robustness checks. Upload code to auto-generate comprehensive sensitivity tests.',
-      icon: '📊',
-      color: 'from-emerald-500 to-teal-600',
+      id: 'game-theory-lab',
+      title: 'Game Theory Lab',
+      description: 'Experiment with 2×2 games: enter payoffs, find pure-strategy Nash equilibria, and get R code to reproduce the analysis.',
+      icon: '🎲',
+      color: 'from-lime-500 to-green-600',
     },
     {
-      id: 'policy-interpretation',
-      title: 'Policy Interpretation AI',
-      description: 'Upload your regression results and get automatic interpretation: result explanation, identification threats, policy implications, and external validity discussion.',
-      icon: '📝',
-      color: 'from-violet-500 to-purple-600',
+      id: 'microeconomics-lab',
+      title: 'Microeconomics Lab',
+      description: 'Linear demand and supply: set parameters, see equilibrium price and quantity, and get R code with a plot.',
+      icon: '📈',
+      color: 'from-sky-500 to-blue-600',
     },
     {
       id: 'coding-helper',
@@ -162,18 +162,18 @@ function ProfessionDashboard({ isAuthenticated, setIsAuthenticated, isGuest = fa
       color: 'from-amber-500 to-orange-600',
     },
     {
-      id: 'game-theory-lab',
-      title: 'Game Theory Lab',
-      description: 'Experiment with 2×2 games: enter payoffs, find pure-strategy Nash equilibria, and get R code to reproduce the analysis.',
-      icon: '🎲',
-      color: 'from-lime-500 to-green-600',
+      id: 'policy-analyst',
+      title: 'Empirical Analyst AI',
+      description: 'Upload your data to perform empirical analysis, build analysis pipelines, and generate robustness checks. Upload code to auto-generate comprehensive sensitivity tests.',
+      icon: '📊',
+      color: 'from-emerald-500 to-teal-600',
     },
     {
-      id: 'microeconomics-lab',
-      title: 'Microeconomics Lab',
-      description: 'Linear demand and supply: set parameters, see equilibrium price and quantity, and get R code with a plot.',
-      icon: '📈',
-      color: 'from-sky-500 to-blue-600',
+      id: 'policy-interpretation',
+      title: 'Policy Interpretation AI',
+      description: 'Upload your regression results and get automatic interpretation: result explanation, identification threats, policy implications, and external validity discussion.',
+      icon: '📝',
+      color: 'from-violet-500 to-purple-600',
     },
     {
       id: 'policy-dl-agent',
@@ -337,7 +337,9 @@ function ProfessionDashboard({ isAuthenticated, setIsAuthenticated, isGuest = fa
       {/* Footer */}
       <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-center">
         <p className="text-gray-600 text-sm">
-          © 2026 Yuhuan. All rights reserved. | Author: Yuhuan | Got feedback? I'm all ears! 👂
+          Author: Yuhuan | Made with courage and curiosity. Limited ability, but keep improving — thank you so much for your encouragement and feedback! ❤️
+          <br />
+          © 2026 Yuhuan. All rights reserved.
         </p>
       </footer>
 
