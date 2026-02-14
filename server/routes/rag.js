@@ -8,6 +8,7 @@ import OpenAI from 'openai'
 import { getPool } from '../db.js'
 import { validateInput } from '../middleware/security.js'
 import { authenticateToken } from './auth.js'
+import { getChatModel } from '../config/openai.js'
 
 const router = express.Router()
 const EMBEDDING_MODEL = 'text-embedding-3-small'
@@ -189,7 +190,7 @@ router.post('/query',
     checkProfanity: true,
     filterProfanity: true,
     maxLength: 2000,
-    allowedFields: ['question', 'topK']
+    allowedFields: ['question', 'topK', 'model']
   }),
   async (req, res) => {
     try {
@@ -222,8 +223,9 @@ router.post('/query',
       const userMessage = context
         ? `Context from knowledge base:\n\n${context}\n\n---\n\nUser question: ${question.trim()}`
         : `No relevant documents in the knowledge base yet. User question: ${question.trim()}\n\nSuggest they add documents first.`
+      const model = getChatModel(req)
       const completion = await getOpenAI().chat.completions.create({
-        model: 'gpt-4o',
+        model,
         messages: [
           { role: 'system', content: systemMessage },
           { role: 'user', content: userMessage }

@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { validatePassword, limitInputLength } from '../utils/security'
-import api from '../utils/api'
+import api, { getPreferredModel, PREFERRED_MODEL_KEY } from '../utils/api'
 
 function Settings() {
   const navigate = useNavigate()
@@ -11,6 +11,27 @@ function Settings() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
+  const [preferredModel, setPreferredModel] = useState(getPreferredModel())
+  const [modelSuccess, setModelSuccess] = useState('')
+
+  useEffect(() => {
+    setPreferredModel(getPreferredModel())
+  }, [])
+
+  const MODEL_OPTIONS = [
+    { id: 'gpt-5-nano', label: 'GPT-5 nano', desc: 'Fastest' },
+    { id: 'gpt-5-mini', label: 'GPT-5 mini', desc: 'Fast' },
+    { id: 'gpt-5.2', label: 'GPT-5.2', desc: 'Best quality' },
+    { id: 'gpt-4.1', label: 'GPT-4.1', desc: 'Balanced' },
+  ]
+
+  const handleModelChange = (e) => {
+    const value = e.target.value
+    setPreferredModel(value)
+    localStorage.setItem(PREFERRED_MODEL_KEY, value)
+    setModelSuccess('AI model updated')
+    setTimeout(() => setModelSuccess(''), 2000)
+  }
 
   const handleCurrentPasswordChange = (e) => {
     const value = limitInputLength(e.target.value, 128)
@@ -112,6 +133,25 @@ function Settings() {
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-800 mb-2">Settings</h1>
             <p className="text-gray-600">Manage your account settings</p>
+          </div>
+
+          <div className="border-t border-gray-200 pt-8">
+            <h2 className="text-xl font-semibold text-gray-800 mb-4">AI Model</h2>
+            <p className="text-gray-600 text-sm mb-4">Choose which OpenAI model to use for chat, analysis, and code generation.</p>
+            <select
+              value={MODEL_OPTIONS.some(o => o.id === preferredModel) ? preferredModel : 'gpt-5-nano'}
+              onChange={handleModelChange}
+              className="w-full max-w-md px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition bg-white"
+            >
+              {MODEL_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label} — {opt.desc}
+                </option>
+              ))}
+            </select>
+            {modelSuccess && (
+              <p className="mt-2 text-sm text-green-600">{modelSuccess}</p>
+            )}
           </div>
 
           <div className="border-t border-gray-200 pt-8">

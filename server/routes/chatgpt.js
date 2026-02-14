@@ -1,6 +1,7 @@
 import express from 'express'
 import OpenAI from 'openai'
 import { validateInput } from '../middleware/security.js'
+import { getChatModel } from '../config/openai.js'
 
 const router = express.Router()
 
@@ -40,7 +41,7 @@ router.post('/chatgpt',
     checkSQLInjection: false,
     checkXSS: false,
     maxLength: 50000,
-    allowedFields: ['prompt', 'systemMessage', 'temperature']
+    allowedFields: ['prompt', 'systemMessage', 'temperature', 'model']
   }),
   async (req, res) => {
   try {
@@ -70,9 +71,10 @@ router.post('/chatgpt',
     })
 
     const temperature = reqTemp != null ? Math.min(2, Math.max(0, Number(reqTemp))) : 0.7
+    const model = getChatModel(req)
     const client = getOpenAIClient()
     const completion = await client.chat.completions.create({
-      model: 'gpt-4o',
+      model,
       messages: messages,
       temperature,
       max_tokens: 4000
@@ -118,7 +120,7 @@ router.post('/chatgpt/stream',
     checkSQLInjection: false,
     checkXSS: false,
     maxLength: 50000,
-    allowedFields: ['prompt', 'systemMessage', 'temperature']
+    allowedFields: ['prompt', 'systemMessage', 'temperature', 'model']
   }),
   async (req, res) => {
     try {
@@ -130,9 +132,10 @@ router.post('/chatgpt/stream',
       if (systemMessage) messages.push({ role: 'system', content: systemMessage })
       messages.push({ role: 'user', content: prompt })
       const temperature = reqTemp != null ? Math.min(2, Math.max(0, Number(reqTemp))) : 0.7
+      const model = getChatModel(req)
       const client = getOpenAIClient()
       const stream = await client.chat.completions.create({
-        model: 'gpt-4o',
+        model,
         messages,
         temperature,
         max_tokens: 4000,
@@ -178,11 +181,12 @@ router.post('/pic-to-latex',
         return res.status(400).json({ error: 'Invalid image type' })
       }
 
-      // Use GPT-4 Vision to analyze the image and generate LATEX
+      // Use vision model to analyze the image and generate LATEX
+      const model = getChatModel(req)
       const client = getOpenAIClient()
       
       const completion = await client.chat.completions.create({
-        model: 'gpt-4o',
+        model,
         messages: [
           {
             role: 'system',

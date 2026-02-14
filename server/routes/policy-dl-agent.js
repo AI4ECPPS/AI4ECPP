@@ -3,6 +3,7 @@ import { spawn } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import OpenAI from 'openai'
+import { getChatModel } from '../config/openai.js'
 
 const router = express.Router()
 
@@ -441,8 +442,9 @@ Rules:
 User goal: ${goal.trim()}
 
 Generate the compute_reward function code only (no markdown, no \`\`\`).`
+    const model = getChatModel(req)
     const completion = await client.chat.completions.create({
-      model: 'gpt-4o',
+      model,
       messages: [
         { role: 'system', content: systemMessage },
         { role: 'user', content: prompt }
@@ -494,8 +496,9 @@ Outcome variable names: ${targetVars.join(', ')}
 Feature importance (which inputs the model relied on most): ${JSON.stringify(featureImportance)}
 
 Write: (1) what the recommended policy is, (2) how predicted outcomes change vs baseline, (3) what drives the model's predictions. Be concise and avoid jargon.`
+    const model = getChatModel(req)
     const completion = await client.chat.completions.create({
-      model: 'gpt-4o',
+      model,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.5,
       max_tokens: 800

@@ -5,6 +5,7 @@
  */
 
 import express from 'express'
+import { getChatModel } from '../config/openai.js'
 import OpenAI from 'openai'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -191,9 +192,10 @@ Data file(s): ${filesStr || 'user will load data'}
 
 Rules: Output only ${lang} code. Use the variable names and file names above. No markdown code fences. Comments are fine.`
 
+    const model = getChatModel(req)
     const client = getOpenAI()
     const completion = await client.chat.completions.create({
-      model: 'gpt-4o',
+      model,
       messages: [
         { role: 'system', content: systemMessage },
         { role: 'user', content: prompt.trim() }

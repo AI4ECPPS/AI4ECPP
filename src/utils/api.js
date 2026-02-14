@@ -11,11 +11,25 @@ const api = axios.create({
   },
 })
 
-// Add auth token to requests
+// Preferred AI model (user can change in Settings)
+export const PREFERRED_MODEL_KEY = 'preferredOpenAIModel'
+export const getPreferredModel = () => localStorage.getItem(PREFERRED_MODEL_KEY) || 'gpt-5-nano'
+
+// Add auth token and preferred model to requests
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('authToken')
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
+  }
+  // Add preferred model to OpenAI-related API calls
+  const model = getPreferredModel()
+  const url = (config.url || '').toString()
+  if (config.method === 'post' && config.data && typeof config.data === 'object') {
+    const needsModel = url.includes('chatgpt') || url.includes('rag/query') || url.includes('pic-to-latex') ||
+      url.includes('nl-code-runner') || url.includes('policy-dl-agent')
+    if (needsModel && !config.data.model) {
+      config.data = { ...config.data, model }
+    }
   }
   return config
 })
@@ -23,7 +37,7 @@ api.interceptors.request.use((config) => {
 // ChatGPT API integration helper. options: { temperature } (e.g. 0.3 for code)
 export const callChatGPT = async (prompt, systemMessage = '', options = {}) => {
   try {
-    const body = { prompt, systemMessage }
+    const body = { prompt, systemMessage, model: options.model ?? getPreferredModel() }
     if (options.temperature != null) body.temperature = options.temperature
     const response = await api.post('/chatgpt', body)
     return {
@@ -52,7 +66,7 @@ export const callChatGPTStream = async (prompt, systemMessage = '', onChunk) => 
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     },
-    body: JSON.stringify({ prompt, systemMessage, temperature: 0.3 })
+    body: JSON.stringify({ prompt, systemMessage, temperature: 0.3, model: getPreferredModel() })
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
