@@ -3,7 +3,7 @@ import { spawn } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import OpenAI from 'openai'
-import { getChatModel } from '../config/openai.js'
+import { getChatModel, buildTemperatureParam } from '../config/openai.js'
 
 const router = express.Router()
 
@@ -449,7 +449,7 @@ Generate the compute_reward function code only (no markdown, no \`\`\`).`
         { role: 'system', content: systemMessage },
         { role: 'user', content: prompt }
       ],
-      temperature: 0.3,
+      ...buildTemperatureParam(model, 0.3),
       max_completion_tokens: 1500
     })
     let code = (completion.choices[0].message.content || '').trim()
@@ -500,7 +500,7 @@ Write: (1) what the recommended policy is, (2) how predicted outcomes change vs 
     const completion = await client.chat.completions.create({
       model,
       messages: [{ role: 'user', content: prompt }],
-      temperature: 0.5,
+      ...buildTemperatureParam(model, 0.5),
       max_completion_tokens: 800
     })
     const explanation = (completion.choices[0].message.content || '').trim()

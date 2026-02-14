@@ -1,7 +1,7 @@
 import express from 'express'
 import OpenAI from 'openai'
 import { validateInput } from '../middleware/security.js'
-import { getChatModel } from '../config/openai.js'
+import { getChatModel, buildTemperatureParam } from '../config/openai.js'
 
 const router = express.Router()
 
@@ -70,13 +70,13 @@ router.post('/chatgpt',
       content: prompt
     })
 
-    const temperature = reqTemp != null ? Math.min(2, Math.max(0, Number(reqTemp))) : 0.7
+    const desiredTemp = reqTemp != null ? Math.min(2, Math.max(0, Number(reqTemp))) : 0.7
     const model = getChatModel(req)
     const client = getOpenAIClient()
     const completion = await client.chat.completions.create({
       model,
       messages: messages,
-      temperature,
+      ...buildTemperatureParam(model, desiredTemp),
       max_completion_tokens: 4000
     })
 
@@ -131,13 +131,13 @@ router.post('/chatgpt/stream',
       const messages = []
       if (systemMessage) messages.push({ role: 'system', content: systemMessage })
       messages.push({ role: 'user', content: prompt })
-      const temperature = reqTemp != null ? Math.min(2, Math.max(0, Number(reqTemp))) : 0.7
+      const desiredTemp = reqTemp != null ? Math.min(2, Math.max(0, Number(reqTemp))) : 0.7
       const model = getChatModel(req)
       const client = getOpenAIClient()
       const stream = await client.chat.completions.create({
         model,
         messages,
-        temperature,
+        ...buildTemperatureParam(model, desiredTemp),
         max_completion_tokens: 4000,
         stream: true
       })
@@ -249,7 +249,7 @@ Return ONLY the LaTeX code without any markdown formatting, code blocks, dollar 
           }
         ],
         max_completion_tokens: 2000, // Increased for complex formulas
-        temperature: 0.1 // Low temperature for accuracy
+        ...buildTemperatureParam(model, 0.1) // Low temperature for accuracy
       })
 
       let latexCode = completion.choices[0].message.content.trim()

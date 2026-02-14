@@ -5,7 +5,7 @@
  */
 
 import express from 'express'
-import { getChatModel } from '../config/openai.js'
+import { getChatModel, buildTemperatureParam } from '../config/openai.js'
 import OpenAI from 'openai'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -200,7 +200,7 @@ Rules: Output only ${lang} code. Use the variable names and file names above. No
         { role: 'system', content: systemMessage },
         { role: 'user', content: prompt.trim() }
       ],
-      temperature: 0.2,
+      ...buildTemperatureParam(model, 0.2),
       max_completion_tokens: 2000
     })
     let code = (completion.choices[0].message.content || '').trim()

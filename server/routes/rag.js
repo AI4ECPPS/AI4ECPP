@@ -8,7 +8,7 @@ import OpenAI from 'openai'
 import { getPool } from '../db.js'
 import { validateInput } from '../middleware/security.js'
 import { authenticateToken } from './auth.js'
-import { getChatModel } from '../config/openai.js'
+import { getChatModel, buildTemperatureParam } from '../config/openai.js'
 
 const router = express.Router()
 const EMBEDDING_MODEL = 'text-embedding-3-small'
@@ -230,7 +230,7 @@ router.post('/query',
           { role: 'system', content: systemMessage },
           { role: 'user', content: userMessage }
         ],
-        temperature: 0.3,
+        ...buildTemperatureParam(model, 0.3),
         max_completion_tokens: 2000
       })
       const answer = completion.choices[0].message.content
