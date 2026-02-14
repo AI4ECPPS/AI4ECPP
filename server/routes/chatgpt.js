@@ -77,7 +77,7 @@ router.post('/chatgpt',
       model,
       messages: messages,
       temperature,
-      max_tokens: 4000
+      max_completion_tokens: 4000
     })
 
     const response = completion.choices[0].message.content
@@ -138,7 +138,7 @@ router.post('/chatgpt/stream',
         model,
         messages,
         temperature,
-        max_tokens: 4000,
+        max_completion_tokens: 4000,
         stream: true
       })
       res.setHeader('Content-Type', 'text/event-stream')
@@ -248,7 +248,7 @@ Return ONLY the LaTeX code without any markdown formatting, code blocks, dollar 
             ]
           }
         ],
-        max_tokens: 2000, // Increased for complex formulas
+        max_completion_tokens: 2000, // Increased for complex formulas
         temperature: 0.1 // Low temperature for accuracy
       })
 

@@ -201,7 +201,7 @@ Rules: Output only ${lang} code. Use the variable names and file names above. No
         { role: 'user', content: prompt.trim() }
       ],
       temperature: 0.2,
-      max_tokens: 2000
+      max_completion_tokens: 2000
     })
     let code = (completion.choices[0].message.content || '').trim()
     code = code.replace(/^```(?:r|R|stata)?\s*/i, '').replace(/\s*```$/i, '').trim()

@@ -231,7 +231,7 @@ router.post('/query',
           { role: 'user', content: userMessage }
         ],
         temperature: 0.3,
-        max_tokens: 2000
+        max_completion_tokens: 2000
       })
       const answer = completion.choices[0].message.content
       res.json({

@@ -450,7 +450,7 @@ Generate the compute_reward function code only (no markdown, no \`\`\`).`
         { role: 'user', content: prompt }
       ],
       temperature: 0.3,
-      max_tokens: 1500
+      max_completion_tokens: 1500
     })
     let code = (completion.choices[0].message.content || '').trim()
     code = code.replace(/^```(?:python)?\s*/i, '').replace(/\s*```$/i, '').trim()
@@ -501,7 +501,7 @@ Write: (1) what the recommended policy is, (2) how predicted outcomes change vs 
       model,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.5,
-      max_tokens: 800
+      max_completion_tokens: 800
     })
     const explanation = (completion.choices[0].message.content || '').trim()
     res.json({
