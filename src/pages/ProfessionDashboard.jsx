@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Logo from '../components/Logo'
+import ModelSelector from '../components/ModelSelector'
 import Login from './Login'
 import SignUp from './SignUp'
 
@@ -207,6 +208,7 @@ function ProfessionDashboard({ isAuthenticated, setIsAuthenticated, isGuest = fa
               <span>🎓</span>
               <span>Switch to Student Mode</span>
             </button>
+            <ModelSelector />
             {isAuthenticated ? (
               <>
                 <span className="text-gray-600">Welcome, {userEmail}</span>
