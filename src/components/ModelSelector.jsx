@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { getPreferredModel, PREFERRED_MODEL_KEY } from '../utils/api'
 
 const MODEL_OPTIONS = [
+  { id: 'gpt-4o', label: 'GPT-4o', desc: 'Default (balanced)' },
   { id: 'gpt-5-nano', label: 'GPT-5 nano', desc: 'Fastest' },
   { id: 'gpt-5-mini', label: 'GPT-5 mini', desc: 'Fast' },
   { id: 'gpt-5.2', label: 'GPT-5.2', desc: 'Best quality' },
@@ -24,7 +25,7 @@ export default function ModelSelector() {
   }
 
   const current = MODEL_OPTIONS.find(o => o.id === preferredModel) || MODEL_OPTIONS[0]
-  const displayValue = MODEL_OPTIONS.some(o => o.id === preferredModel) ? preferredModel : 'gpt-5-nano'
+  const displayValue = MODEL_OPTIONS.some(o => o.id === preferredModel) ? preferredModel : 'gpt-4o'
 
   return (
     <div className="relative flex items-center gap-2 pl-3 pr-8 py-2 rounded-xl bg-white/80 border border-gray-200 shadow-sm hover:shadow-md hover:border-indigo-200/60 transition-all duration-200">

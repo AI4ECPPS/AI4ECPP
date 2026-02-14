@@ -2,7 +2,7 @@
  * Centralized OpenAI model configuration.
  * Default: gpt-5-nano (fastest). Override via OPENAI_CHAT_MODEL env or request body.
  */
-export const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-5-nano'
+export const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o'
 
 const ALLOWED_MODELS = ['gpt-5-nano', 'gpt-5-mini', 'gpt-5.2', 'gpt-4.1', 'gpt-4o', 'gpt-4o-mini']
 

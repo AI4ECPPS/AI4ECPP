@@ -13,7 +13,7 @@ const api = axios.create({
 
 // Preferred AI model (user can change in Settings)
 export const PREFERRED_MODEL_KEY = 'preferredOpenAIModel'
-export const getPreferredModel = () => localStorage.getItem(PREFERRED_MODEL_KEY) || 'gpt-5-nano'
+export const getPreferredModel = () => localStorage.getItem(PREFERRED_MODEL_KEY) || 'gpt-4o'
 
 // Add auth token and preferred model to requests
 api.interceptors.request.use((config) => {
